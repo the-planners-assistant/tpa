@@ -113,7 +113,21 @@ Build the tool planners actually need:
 
 ## Roadmap at a Glance
 
-*
+* Map-centric DM workflow (upload → parse → constraints → draft report)
+
+* Policy authoring and graph explorer (cross-refs, material considerations)
+
+* Hybrid search (semantic + bbox/polygon + filters)
+
+* VLM checkers for design-code-style cues (explainable outputs)
+
+* Viability signals + S106 draft template engine
+
+* Appeals/precedent vector retrieval with citations
+
+* Provenance-linked, versioned report editor
+
+* Accessibility passes and keyboard-first UX
 
 ---
 
