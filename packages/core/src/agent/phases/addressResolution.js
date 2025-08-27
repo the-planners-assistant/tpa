@@ -40,7 +40,14 @@ export async function resolveAddressPhase(agent, documentResults, assessment) {
   console.log('Address Resolution: Found addresses:', allAddresses);
   
   // Try to resolve addresses with Google geocoding first
-  const addressResult = await agent.addressExtractor.extractAddresses(allAddresses.join(' '));
+  // Boost addresses that contain full UK postcode (improve ordering before extraction)
+  const postcodeRegex = /\b[A-Z]{1,2}[0-9][0-9A-Z]?\s?[0-9][ABD-HJLNP-UW-Z]{2}\b/i;
+  const boosted = allAddresses.sort((a,b)=>{
+    const ap = postcodeRegex.test(a) ? 1 : 0;
+    const bp = postcodeRegex.test(b) ? 1 : 0;
+    return bp - ap; // postcode-containing first
+  });
+  const addressResult = await agent.addressExtractor.extractAddresses(boosted.join(' '));
   
   if (!addressResult.hasValidAddress) {
     // Enhanced fallback 1: Try LLM-based address analysis

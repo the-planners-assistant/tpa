@@ -63,6 +63,7 @@ pnpm-lock.yaml
 *.orig
 *.rej
 *.patch
+*.pdf
 
 # Runtime data
 pids

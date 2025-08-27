@@ -21,7 +21,7 @@ export async function aiAnalysisPhase(agent, documentResults, spatialResults, as
     let developmentType = null;
     let retrievalResults = null;
     
-    if (documentResults.chunks?.length) {
+  if (documentResults.chunks?.length) {
       agent.addTimelineEvent(assessment, 'ai_text_analysis', 'Analyzing document content with enhanced retrieval');
       
       // Use agentic retrieval to find relevant additional context
@@ -32,11 +32,10 @@ export async function aiAnalysisPhase(agent, documentResults, spatialResults, as
       };
       developmentType = context.developmentType;
 
-      retrievalResults = await agent.agenticRetrieve(
-        `planning analysis ${documentResults.extractedData?.description || 'development proposal'}`,
-        context,
-        { useAgentic: true }
-      );
+  // Construct a more specific, hierarchical retrieval query
+  const baseDesc = documentResults.extractedData?.description || 'development proposal';
+  const refinedQuery = `${context.developmentType||''} planning policy assessment for ${baseDesc}`.trim();
+  retrievalResults = await agent.agenticRetrieve(refinedQuery, context, { useAgentic: true });
       results.retrievalResults = retrievalResults;
     }
 
@@ -46,9 +45,9 @@ export async function aiAnalysisPhase(agent, documentResults, spatialResults, as
     const parallelAnalyses = [];
     
     // Text analysis with retrieved context
-    if (documentResults.chunks?.length) {
+  if (documentResults.chunks?.length) {
       parallelAnalyses.push(
-        agent.analyzeTextContentWithContext(documentResults.chunks, retrievalResults.combined)
+    agent.analyzeTextContentWithContext(documentResults.chunks, (retrievalResults.limitedContext || retrievalResults.combined || []).slice(0,12))
           .then(result => ({ type: 'textAnalysis', result }))
           .catch(error => ({ type: 'textAnalysis', error: error.message }))
       );
@@ -65,7 +64,11 @@ export async function aiAnalysisPhase(agent, documentResults, spatialResults, as
     
     // Contextual analysis
     parallelAnalyses.push(
-      agent.performEnhancedContextualAnalysis(documentResults, spatialResults, retrievalResults)
+      agent.performEnhancedContextualAnalysis(documentResults, spatialResults, {
+        ...retrievalResults,
+        combined: retrievalResults.limitedContext || retrievalResults.combined,
+        policyMatrix: retrievalResults.policyMatrix
+      })
         .then(result => ({ type: 'contextualAnalysis', result }))
         .catch(error => ({ type: 'contextualAnalysis', error: error.message }))
     );

@@ -1,15 +1,18 @@
 export async function processDocumentsPhase(agent, documentFiles, assessment) {
+  const isStructured = !Array.isArray(documentFiles) && typeof documentFiles === 'object';
+  const flatList = isStructured ? [...(documentFiles.application||[]).map(f=>({file:f, role:'application'})), ...(documentFiles.policy||[]).map(f=>({file:f, role:'policy'}))] : (documentFiles||[]).map(f=>({file:f, role:'unknown'}));
   const results = {
     processed: [],
-    totalDocuments: documentFiles.length,
+    totalDocuments: flatList.length,
     extractedData: {},
     images: [],
     chunks: [],
     addresses: [],
-    planningRefs: []
+    planningRefs: [],
+    roleSummary: { application: 0, policy: 0, unknown: 0 }
   };
-  for (let i = 0; i < documentFiles.length; i++) {
-    const file = documentFiles[i];
+  for (let i = 0; i < flatList.length; i++) {
+    const { file, role } = flatList[i];
     try {
       agent.addTimelineEvent(assessment, 'document_processing', `Processing document: ${file.name}`);
       let dataBuffer = null;
@@ -37,25 +40,35 @@ export async function processDocumentsPhase(agent, documentFiles, assessment) {
         parseResult.chunks = rawChunks.map((c, idx) => ({ id: `${file.name}-chunk-${idx}`, content: c, metadata: { source: file.name, index: idx } }));
       }
       // Embed chunks once (avoid duplicate push) - PARALLEL PROCESSING
-      if (parseResult.chunks && parseResult.chunks.length && !parseResult.__embedded) {
+  if (parseResult.chunks && parseResult.chunks.length && !parseResult.__embedded) {
         const embeddingPromises = parseResult.chunks.map(async (chunk, index) => {
           try {
             if (!chunk.embedding) {
               chunk.embedding = await agent.embedder.embed(chunk.content.slice(0, 5000));
             }
-            return { content: chunk.content, embedding: chunk.embedding, metadata: chunk.metadata };
+    return { content: chunk.content, embedding: chunk.embedding, metadata: { ...(chunk.metadata||{}), role: role } };
           } catch (embErr) {
             console.warn(`Embedding failed for chunk ${chunk.id || index}:`, embErr.message);
-            return { content: chunk.content, embedding: null, metadata: chunk.metadata };
+    return { content: chunk.content, embedding: null, metadata: { ...(chunk.metadata||{}), role: role } };
           }
         });
         
         // Process all embeddings in parallel
         const embeddedChunks = await Promise.all(embeddingPromises);
-        results.chunks.push(...embeddedChunks.filter(chunk => chunk.embedding !== null));
+        const good = embeddedChunks.filter(chunk => chunk.embedding !== null);
+        results.chunks.push(...good);
+        // Populate role-specific vector stores
+        if (!agent.vectorStore) agent.vectorStore = [];
+        agent.vectorStore.push(...good.map(c=>({ text: c.content, embedding: c.embedding, metadata: c.metadata })));
+        if (role === 'application') {
+          agent.vectorStoreApplication.push(...good.map(c=>({ text: c.content, embedding: c.embedding, metadata: c.metadata })));
+        } else if (role === 'policy') {
+          agent.vectorStorePolicy.push(...good.map(c=>({ text: c.content, embedding: c.embedding, metadata: c.metadata })));
+        }
         parseResult.__embedded = true;
       }
-      results.processed.push({ filename: file.name, type: parseResult.documentType, status: 'success', extractedData: parseResult.extractedData, imageCount: parseResult.images?.length || 0, chunkCount: parseResult.chunks?.length || 0 });
+      results.processed.push({ filename: file.name, role, type: parseResult.documentType, status: 'success', extractedData: parseResult.extractedData, imageCount: parseResult.images?.length || 0, chunkCount: parseResult.chunks?.length || 0 });
+      results.roleSummary[role] = (results.roleSummary[role]||0)+1;
       if (parseResult.extractedData) results.extractedData = agent.mergeExtractedData(results.extractedData, parseResult.extractedData);
       if (parseResult.images) results.images.push(...parseResult.images);
       // (Avoid pushing parseResult.chunks again — already added above with embeddings)
@@ -63,7 +76,7 @@ export async function processDocumentsPhase(agent, documentFiles, assessment) {
       if (parseResult.planningApplicationRefs) results.planningRefs.push(...parseResult.planningApplicationRefs);
     } catch (error) {
       console.error(`Failed to process document ${file.name}:`, error);
-      results.processed.push({ filename: file.name, status: 'error', error: error.message });
+      results.processed.push({ filename: file.name, role, status: 'error', error: error.message });
     }
   }
   return results;

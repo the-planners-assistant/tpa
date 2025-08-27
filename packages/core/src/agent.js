@@ -61,10 +61,15 @@ class Agent {
           maxOutputTokens: 8192,
         },
       });
+      // Pro model for grounding / reasoning bursts (optional)
+      try {
+        this.proModel = this.genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+      } catch { this.proModel = null; }
     } else {
       this.genAI = null;
       this.model = null;
       this.visionModel = null;
+      this.proModel = null;
     }
     
     // Initialize components
@@ -98,7 +103,11 @@ class Agent {
     this.activeAssessments = new Map();
     this.taskQueue = [];
     this.analysisCache = new Map();
-    this.contextWindow = new Map();
+  this.contextWindow = new Map();
+  // Vector stores (separate by role plus aggregate for backwards compatibility)
+  this.vectorStore = []; // aggregate legacy store (all)
+  this.vectorStoreApplication = [];
+  this.vectorStorePolicy = [];
     this.assessmentHistory = [];
     this.confidenceThreshold = this.config.confidenceThreshold;
     
@@ -259,11 +268,15 @@ class Agent {
     
     try {
       // Initialize assessment tracking
+      // Support structured document roles: { application: [...], policy: [...] }
+      const isStructured = !Array.isArray(documentFiles) && typeof documentFiles === 'object';
       const assessment = {
         id: assessmentId,
         status: 'initializing',
         startTime: new Date(),
         documents: documentFiles,
+        applicationDocuments: isStructured ? (documentFiles.application || []) : (Array.isArray(documentFiles) ? documentFiles : []),
+        policyDocuments: isStructured ? (documentFiles.policy || []) : [],
         options: options,
         results: {},
         confidence: 0,
@@ -813,7 +826,8 @@ Provide a structured assessment including:
     // Retrieval coverage
     if (results.retrievalResults) {
       const totalSources = [
-        results.retrievalResults.local?.length || 0,
+  results.retrievalResults.localApplication?.length || 0,
+  results.retrievalResults.localPolicy?.length || 0,
         results.retrievalResults.planIt?.length || 0,
         results.retrievalResults.policies?.length || 0,
         results.retrievalResults.constraints?.length || 0
@@ -847,6 +861,22 @@ Provide a structured assessment including:
 
   // Legacy search methods for backwards compatibility
   async searchVectorStore(query) {
+    // Overloaded: searchVectorStore(query) -> legacy aggregate (strings)
+    // searchVectorStore(query, category) -> detailed objects for category ('application'|'policy')
+    const category = arguments[1];
+    if (category === 'application' || category === 'policy') {
+      const store = category === 'application' ? this.vectorStoreApplication : this.vectorStorePolicy;
+      if (!store || store.length === 0) return [];
+      const queryEmbedding = await this.embedder.embed(query.slice(0, 5000));
+      const scored = store.map(item => ({
+        content: item.text,
+        similarity: this.cosineSimilarity(queryEmbedding, item.embedding || []),
+        metadata: item.metadata || {},
+        role: category
+      })).filter(r => !Number.isNaN(r.similarity));
+      scored.sort((a,b)=>b.similarity-a.similarity);
+      return scored.slice(0, 12); // return richer objects
+    }
     if (!this.vectorStore || this.vectorStore.length === 0) return [];
     const queryEmbedding = await this.embedder.embed(query.slice(0, 5000));
     const scored = this.vectorStore.map(item => ({
@@ -862,139 +892,132 @@ Provide a structured assessment including:
    * LLM can request additional data as needed for comprehensive assessment
    */
   async agenticRetrieve(query, context = {}, options = {}) {
+    // Hierarchical retrieval: differentiate application vs policy context.
     const retrievalResults = {
-      local: [],
+      localApplication: [],
+      localPolicy: [],
       planIt: [],
-      policies: [],
+      policies: [], // external policy fetch (legacy)
       constraints: [],
       precedents: [],
       additionalData: [],
-      retrievalStrategy: 'hybrid'
+      retrievalStrategy: 'hierarchical'
     };
 
     try {
-      // Phase 1: Local semantic search
-      const localResults = await this.searchVectorStore(query);
-      retrievalResults.local = localResults;
+      // Phase 1: Role-aware local semantic search
+      const applicationLocal = await this.searchVectorStore(query, 'application');
+      const policyLocal = await this.searchVectorStore(query, 'policy');
+      retrievalResults.localApplication = applicationLocal;
+      retrievalResults.localPolicy = policyLocal;
 
-      // Phase 2: Determine what additional data is needed using LLM
+      // Phase 2: Minimal data-needs reasoning (reuse existing logic if LLM available)
+      let dataNeeds = { needsPlanItData: false, needsPolicyData: false, needsConstraintData: false, needsPrecedentData: false, additionalQueries: [] };
       if (this.model && options.useAgentic !== false) {
-        const dataNeeds = await this.assessDataNeeds(query, context, localResults);
-        
-        // Phase 3: Fetch additional data in parallel based on LLM assessment
-        const dataFetchPromises = [];
-        
-        if (dataNeeds.needsPlanItData) {
-          dataFetchPromises.push(
-            this.planItAPI.searchApplications({ search: query, pg_sz: 20 })
-              .then(planItResp => ({ type: 'planIt', data: planItResp?.records || [] }))
-              .catch(e => {
-                console.warn('PlanIt search failed:', e.message);
-                return { type: 'planIt', data: [] };
-              })
+        dataNeeds = await this.assessDataNeeds(query, context, applicationLocal.map(r=>r.content));
+      }
+
+      // Adjust heuristics: only allow broad PlanIt queries if query appears highly specific (has a number or address tokens) or address provided
+      const hasSpecificity = /\b(\d{1,4})\b/.test(query) || (context.address && context.address.length > 5);
+      if (!hasSpecificity) {
+        dataNeeds.needsPlanItData = false; // suppress generic precedent noise
+      }
+
+      // Phase 3: Targeted external fetches
+      const fetchPromises = [];
+      if (dataNeeds.needsPlanItData && (context.address || context.coordinates)) {
+        const planItQuery = context.address ? `applications near ${context.address}` : query;
+        fetchPromises.push(
+          this.searchPlanItApplications(planItQuery, { limit: 6 })
+            .then(resp => ({ type: 'planIt', data: resp.results || [] }))
+            .catch(e => ({ type: 'planIt', data: [], warn: e.message }))
+        );
+      }
+      if (dataNeeds.needsPolicyData && context.authority) {
+        fetchPromises.push(
+          this.fetchLocalPlanPolicies(context.authority)
+            .then(policies => ({ type: 'policies', data: policies.filter(p=>this.isRelevantPolicy(p, query, context)).slice(0, 8) }))
+            .catch(e => ({ type: 'policies', data: [], warn: e.message }))
+        );
+      }
+      if (dataNeeds.needsConstraintData && context.coordinates) {
+        fetchPromises.push(
+          Promise.resolve().then(async () => {
+            if (!this.spatialAnalyzer.initialized) await this.spatialAnalyzer.initialize();
+            return this.spatialAnalyzer.queryConstraints(context.coordinates, dataNeeds.constraintTypes || ['conservationAreas','listedBuildings','floodZones']);
+          }).then(res => ({ type: 'constraints', data: res || [] }))
+            .catch(e => ({ type: 'constraints', data: [], warn: e.message }))
+        );
+      }
+      if (dataNeeds.needsPrecedentData) {
+        fetchPromises.push(
+          this.searchSimilarCases(query, context)
+            .then(res => ({ type: 'precedents', data: res || [] }))
+            .catch(e => ({ type: 'precedents', data: [], warn: e.message }))
+        );
+      }
+      if (dataNeeds.additionalQueries && dataNeeds.additionalQueries.length) {
+        for (const q of dataNeeds.additionalQueries.slice(0,3)) {
+          fetchPromises.push(
+            this.executeTargetedSearch(q, context)
+              .then(res => ({ type: 'additionalData', data: res, query: q }))
+              .catch(e => ({ type: 'additionalData', data: [], query: q, warn: e.message }))
           );
         }
-
-        if (dataNeeds.needsPolicyData && context.authority) {
-          dataFetchPromises.push(
-            this.fetchLocalPlanPolicies(context.authority)
-              .then(policies => {
-                const relevantPolicies = policies.filter(p => 
-                  this.isRelevantPolicy(p, query, context)
-                ).slice(0, 10);
-                return { type: 'policies', data: relevantPolicies };
-              })
-              .catch(e => {
-                console.warn('Policy fetch failed:', e.message);
-                return { type: 'policies', data: [] };
-              })
-          );
-        }
-
-        if (dataNeeds.needsConstraintData && context.coordinates) {
-          dataFetchPromises.push(
-            // Ensure spatial analyzer is initialized before querying constraints
-            Promise.resolve().then(async () => {
-              if (!this.spatialAnalyzer.initialized) {
-                await this.spatialAnalyzer.initialize();
-              }
-              return this.spatialAnalyzer.queryConstraints(
-                context.coordinates, 
-                dataNeeds.constraintTypes || ['conservationAreas', 'listedBuildings', 'floodZones']
-              );
-            })
-              .then(constraintResults => ({ type: 'constraints', data: constraintResults }))
-              .catch(e => {
-                console.warn('Constraint query failed:', e.message);
-                return { type: 'constraints', data: [] };
-              })
-          );
-        }
-
-        if (dataNeeds.needsPrecedentData) {
-          dataFetchPromises.push(
-            this.searchSimilarCases(query, context)
-              .then(precedents => ({ type: 'precedents', data: precedents }))
-              .catch(e => {
-                console.warn('Precedent search failed:', e.message);
-                return { type: 'precedents', data: [] };
-              })
-          );
-        }
-
-        // Phase 4: Additional targeted searches in parallel
-        if (dataNeeds.additionalQueries && dataNeeds.additionalQueries.length > 0) {
-          const additionalSearchPromises = dataNeeds.additionalQueries.slice(0, 3).map(additionalQuery =>
-            this.executeTargetedSearch(additionalQuery, context)
-              .then(additionalResults => ({
-                type: 'additionalData',
-                query: additionalQuery,
-                data: additionalResults
-              }))
-              .catch(e => {
-                console.warn(`Additional search failed for query "${additionalQuery}":`, e.message);
-                return { type: 'additionalData', query: additionalQuery, data: [] };
-              })
-          );
-          dataFetchPromises.push(...additionalSearchPromises);
-        }
-
-        // Execute all data fetches in parallel
-        const dataFetchResults = await Promise.allSettled(dataFetchPromises);
-        
-        // Process parallel fetch results
-        for (const settledResult of dataFetchResults) {
-          if (settledResult.status === 'fulfilled') {
-            const { type, data, query } = settledResult.value;
-            if (type === 'additionalData') {
-              retrievalResults.additionalData.push({ query, results: data });
-            } else {
-              retrievalResults[type] = data;
-            }
+      }
+      if (fetchPromises.length) {
+        const settled = await Promise.allSettled(fetchPromises);
+        for (const s of settled) {
+          if (s.status === 'fulfilled') {
+            const { type, data, query: q } = s.value;
+            if (type === 'additionalData') retrievalResults.additionalData.push({ query: q, results: data }); else retrievalResults[type] = data;
           }
         }
       }
 
-      // Phase 5: Combine and rank all results
-      const combinedResults = this.combineAndRankResults(retrievalResults, query, context);
-      retrievalResults.combined = combinedResults;
+      // Phase 4: Combine and rank
+      retrievalResults.combined = this.combineAndRankResults(retrievalResults, query, context);
+      // Diversify & prune to avoid context collapse
+      retrievalResults.combined = this.diversifyResults(retrievalResults.combined, 25);
+      // Build policy matrix
+      retrievalResults.policyMatrix = this.buildPolicyMatrix(retrievalResults);
+      // Apply role/token budgets for LLM context
+      retrievalResults.limitedContext = this.applyContextBudget(retrievalResults.combined, {
+        policyTokens: 1200,
+        applicationTokens: 800,
+        otherTokens: 400,
+        maxTotal: 2400
+      });
+      retrievalResults.metrics = { combinedCount: retrievalResults.combined.length, limitedCount: retrievalResults.limitedContext.length };
 
+      // Grounding: if low coverage / sparse policy matrix and pro model available, run up to 2 targeted web grounding searches
+      if (this.proModel && options.enableGrounding !== false) {
+        const needGrounding = (retrievalResults.policyMatrix?.count || 0) < 3 && (retrievalResults.limitedContext.length < 6);
+        if (needGrounding) {
+          retrievalResults.grounding = [];
+          const groundingQueries = this.generateGroundingQueries(query, context).slice(0,2);
+          for (const gq of groundingQueries) {
+            try {
+              const grounded = await this.performGroundedSearch(gq);
+              if (grounded) retrievalResults.grounding.push(grounded);
+            } catch (e) {
+              console.warn('Grounding search failed:', e.message);
+            }
+          }
+          // Merge grounded snippets with moderate weight
+          if (retrievalResults.grounding.length) {
+            const groundedItems = retrievalResults.grounding.flatMap(g => (g.snippets||[]).map(s => ({ source: 'grounded_web', content: s, relevanceScore: 0.45 })));
+            retrievalResults.combined.push(...groundedItems);
+            retrievalResults.combined = this.diversifyResults(retrievalResults.combined, 30);
+            retrievalResults.limitedContext = this.applyContextBudget(retrievalResults.combined, { policyTokens: 1200, applicationTokens: 800, otherTokens: 500, maxTotal: 2500 });
+          }
+        }
+      }
       return retrievalResults;
-
-    } catch (error) {
-      console.error('Agentic retrieval failed:', error);
-      // Fallback to basic search
-      const localResults = await this.searchVectorStore(query);
-      return {
-        local: localResults,
-        planIt: [],
-        policies: [],
-        constraints: [],
-        precedents: [],
-        additionalData: [],
-        combined: localResults.slice(0, 5),
-        retrievalStrategy: 'fallback'
-      };
+    } catch (e) {
+      console.error('Hierarchical agentic retrieval failed:', e);
+      const fallback = await this.searchVectorStore(query);
+      return { localApplication: [], localPolicy: [], planIt: [], policies: [], constraints: [], precedents: [], additionalData: [], combined: fallback.slice(0,5), retrievalStrategy: 'fallback' };
     }
   }
 
@@ -1167,60 +1190,162 @@ Respond in JSON format:
    */
   combineAndRankResults(retrievalResults, query, context) {
     const allResults = [];
-    
-    // Add local results with high weight
-    retrievalResults.local.forEach(r => allResults.push({ 
-      ...r, 
-      source: 'local', 
-      relevanceScore: (r.score || 0.5) * 1.0 
+
+    // Highest priority: local policy (uploaded policy documents)
+    (retrievalResults.localPolicy || []).forEach(r => allResults.push({
+      source: 'local_policy',
+      content: r.content || r.text || r,
+      relevanceScore: 1.0 * (r.similarity || r.relevance || 0.6),
+      role: 'policy'
     }));
 
-    // Add PlanIt results with medium weight
-    retrievalResults.planIt.forEach(r => allResults.push({ 
-      ...r, 
-      source: 'planit', 
-      relevanceScore: 0.7,
-      content: `${r.description || ''} ${r.address || ''}`
+    // Next: local application docs
+    (retrievalResults.localApplication || []).forEach(r => allResults.push({
+      source: 'local_application',
+      content: r.content || r.text || r,
+      relevanceScore: 0.9 * (r.similarity || r.relevance || 0.5),
+      role: 'application'
     }));
 
-    // Add policy results with high weight for policy-related queries
-    const policyWeight = query.toLowerCase().includes('policy') ? 0.9 : 0.6;
-    retrievalResults.policies.forEach(r => allResults.push({ 
-      ...r, 
-      source: 'policy', 
-      relevanceScore: policyWeight,
-      content: r.text || r.description || ''
+    // External policies (if any) slightly lower
+    (retrievalResults.policies || []).forEach(r => allResults.push({
+      source: 'external_policy',
+      content: r.text || r.description || JSON.stringify(r).substring(0,400),
+      relevanceScore: 0.75
     }));
 
-    // Add constraint results with context-dependent weight
-    retrievalResults.constraints.forEach(r => allResults.push({ 
-      ...r, 
-      source: 'constraints', 
-      relevanceScore: 0.8,
-      content: r.description || r.name || ''
+    // Constraints
+    (retrievalResults.constraints || []).forEach(r => allResults.push({
+      source: 'constraints',
+      content: r.description || r.name || JSON.stringify(r).substring(0,200),
+      relevanceScore: 0.7
     }));
 
-    // Add precedent results
-    retrievalResults.precedents.forEach(r => allResults.push({ 
-      ...r, 
-      source: 'precedents', 
-      relevanceScore: r.similarity || 0.5
+    // PlanIt precedents (downgraded weight)
+    (retrievalResults.planIt || []).forEach(r => allResults.push({
+      source: 'planit',
+      content: `${r.description || ''} ${r.address || ''}`.trim(),
+      relevanceScore: 0.55
     }));
 
-    // Add additional targeted results
-    retrievalResults.additionalData.forEach(data => {
-      data.results.forEach(r => allResults.push({ 
-        ...r, 
-        source: 'additional_targeted', 
-        relevanceScore: 0.6,
-        targetedQuery: data.query
+    // Local precedents
+    (retrievalResults.precedents || []).forEach(r => allResults.push({
+      source: 'precedent_local',
+      content: r.context || r.reference || JSON.stringify(r).substring(0,200),
+      relevanceScore: 0.6 * (r.similarity || 0.5)
+    }));
+
+    // Additional targeted queries
+    (retrievalResults.additionalData || []).forEach(block => {
+      (block.results || []).forEach(r => allResults.push({
+        source: 'additional_targeted',
+        targetedQuery: block.query,
+        content: r.content || r.text || r.description || JSON.stringify(r).substring(0,200),
+        relevanceScore: 0.5
       }));
     });
 
-    // Sort by relevance score and limit
-    return allResults
-      .sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0))
-      .slice(0, 25);
+    return allResults.sort((a,b)=> (b.relevanceScore||0)-(a.relevanceScore||0)).slice(0,25);
+  }
+
+  /** Diversify results to reduce redundancy and over-representation */
+  diversifyResults(results, limit=25) {
+    if (!Array.isArray(results)) return [];
+    const maxPerSource = { local_policy: 8, local_application: 8, external_policy: 4, constraints: 4, planit: 4, precedent_local: 4, additional_targeted: 3 };
+    const picked = [];
+    const counts = {};
+    const isNearDuplicate = (a,b) => {
+      const wa = new Set(String(a.content||'').toLowerCase().split(/\W+/));
+      const wb = new Set(String(b.content||'').toLowerCase().split(/\W+/));
+      if (!wa.size || !wb.size) return false;
+      let inter=0; wb.forEach(w=>{ if (wa.has(w)) inter++;});
+      const jacc = inter / (wa.size + wb.size - inter);
+      return jacc > 0.9;
+    };
+    for (const r of results) {
+      if (picked.length >= limit) break;
+      const src = r.source || 'other';
+      counts[src] = counts[src] || 0;
+      if (maxPerSource[src] !== undefined && counts[src] >= maxPerSource[src]) continue;
+      if (picked.some(p=>isNearDuplicate(p,r))) continue;
+      picked.push(r); counts[src]++;
+    }
+    return picked;
+  }
+
+  /** Estimate tokens (rough) */
+  estimateTokens(text){ if(!text) return 0; return Math.ceil(String(text).split(/\s+/).length * 0.75); }
+
+  /** Apply role/token budgets */
+  applyContextBudget(results, budgets){
+    const out = [];
+    let policyT=0, appT=0, otherT=0, total=0;
+    for (const r of results) {
+      const role = r.source;
+      const tok = this.estimateTokens(r.content);
+      if (budgets.maxTotal && total + tok > budgets.maxTotal) continue;
+      if (role === 'local_policy' || role === 'external_policy') {
+        if (policyT + tok > budgets.policyTokens) continue; policyT += tok; out.push(r); total += tok; continue;
+      }
+      if (role === 'local_application') {
+        if (appT + tok > budgets.applicationTokens) continue; appT += tok; out.push(r); total += tok; continue;
+      }
+      if (otherT + tok > budgets.otherTokens) continue; otherT += tok; out.push(r); total += tok;
+    }
+    return out;
+  }
+
+  /** Extract a simple policy compliance matrix from retrieved policy context */
+  buildPolicyMatrix(retrievalResults){
+    const policies = [];
+    const policyItems = [...(retrievalResults.localPolicy||[]), ...(retrievalResults.policies||[]), ...(retrievalResults.combined||[]).filter(r=>/policy/.test(r.source||''))];
+    const seen = new Set();
+    const codeRegexes = [/(?:Policy\s+)?([A-Z]{2,}\d{1,3}[A-Z]?)/g, /\b([A-Z]{2,}-\d{1,3})\b/g];
+    for (const item of policyItems.slice(0,60)) {
+      const text = item.content || item.text || '';
+      for (const rx of codeRegexes) {
+        let m; while ((m = rx.exec(text)) !== null) {
+          const code = m[1];
+          if (code && !seen.has(code)) {
+            seen.add(code);
+            policies.push({ code, snippet: text.substring(0,240) });
+          }
+        }
+      }
+      if (policies.length > 40) break;
+    }
+    return { count: policies.length, policies };
+  }
+
+  /** Suggest grounding queries */
+  generateGroundingQueries(originalQuery, context){
+    const qs = [];
+    if (context.authority) qs.push(`${context.authority} local plan policy summary`);
+    if (context.developmentType) qs.push(`${context.developmentType} planning policy key issues UK`);
+    qs.push(`${originalQuery} planning policy UK`);
+    return Array.from(new Set(qs));
+  }
+
+  /** Perform a grounded web reasoning pass using Google GenAI pro model streaming */
+  async performGroundedSearch(searchQuery){
+    if (!this.proModel) return null;
+    const contents = [
+      { role: 'user', parts: [{ text: `You can perform a grounded reasoning step. Run a concise web-oriented reasoning to identify authoritative planning policy or guidance relevant to: ${searchQuery}. Return JSON with {\n  query:string,\n  inferredTopics:[string],\n  snippets:[string]\n}. Keep snippets under 220 chars.` }] }
+    ];
+    try {
+      const stream = await this.proModel.generateContentStream({ model: 'gemini-2.5-pro', contents, config: { thinkingConfig: { thinkingBudget: -1 } } });
+      let acc = '';
+      for await (const chunk of stream) { if (chunk.text) acc += chunk.text; }
+      const jsonMatch = acc.match(/\{[\s\S]*\}/);
+      let parsed = null;
+      if (jsonMatch) { try { parsed = JSON.parse(jsonMatch[0]); } catch { /* ignore */ } }
+      if (!parsed) parsed = { query: searchQuery, raw: acc.substring(0,800) };
+      parsed.query = parsed.query || searchQuery;
+      return parsed;
+    } catch (e) {
+      console.warn('performGroundedSearch error', e.message);
+      return null;
+    }
   }
 
   /**
@@ -1478,9 +1603,10 @@ Respond in JSON format:
     const recommendation = assessment.recommendation;
     const spatial = assessment.results.spatial;
     const documents = assessment.results.documents;
+    const resolvedAddress = assessment.results.address?.primaryAddress?.formattedAddress || assessment.results.address?.primaryAddress?.cleaned;
 
     return {
-      applicationSite: spatial?.address || 'Address not resolved',
+      applicationSite: spatial?.address || resolvedAddress || 'Address not resolved',
       proposalSummary: documents?.extractedData?.description || 'Description not extracted',
       recommendation: recommendation?.decision || 'No recommendation',
       confidence: recommendation?.confidence || 0,
@@ -1493,10 +1619,11 @@ Respond in JSON format:
   generateSiteAnalysisSection(assessment) {
     const spatial = assessment.results.spatial;
     const address = assessment.results.address;
+  const resolvedAddress = address?.primaryAddress?.formattedAddress || address?.primaryAddress?.cleaned;
 
     return {
       location: {
-        address: address?.primaryAddress?.formattedAddress,
+    address: resolvedAddress,
         coordinates: address?.primaryAddress?.coordinates,
         accuracy: address?.primaryAddress?.accuracy
       },

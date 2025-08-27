@@ -88,7 +88,7 @@ export default class MaterialConsiderations {
       supportingEvidence: [],
       recommendedConditions: []
     };
-
+    let weightedSum = 0; let totalWeight = 0;
     for (const consideration of considerations) {
       const considerationAssessment = await this.assessIndividualConsideration(
         consideration,
@@ -96,13 +96,10 @@ export default class MaterialConsiderations {
         spatialAnalysis,
         documentAnalysis
       );
-      
       assessment.considerations.push(considerationAssessment);
-      
-      // Accumulate scores
-      assessment.overallScore += considerationAssessment.score * (consideration.weight / 100);
-      
-      // Identify key issues
+      const w = (consideration.weight || 100);
+      weightedSum += considerationAssessment.score * w;
+      totalWeight += w;
       if (considerationAssessment.significance === 'high' || considerationAssessment.score < 30) {
         assessment.keyIssues.push({
           consideration: consideration.description,
@@ -111,7 +108,10 @@ export default class MaterialConsiderations {
         });
       }
     }
-
+    assessment.overallScore = totalWeight > 0 ? weightedSum / totalWeight : 50;
+    // Clamp
+    if (assessment.overallScore > 100) assessment.overallScore = 100;
+    if (assessment.overallScore < 0) assessment.overallScore = 0;
     assessment.confidence = this.calculateCategoryConfidence(assessment.considerations);
     
     return assessment;
@@ -463,42 +463,24 @@ export default class MaterialConsiderations {
       overallBalance: 'neutral',
       balancingNarrative: ''
     };
-
-    let totalWeight = 0;
-    let weightedScore = 0;
-
-    // Apply weights to each category
+    let totalWeight = 0; let weightedSum = 0;
     for (const [category, assessment] of Object.entries(materialConsiderations)) {
       const categoryWeight = this.getCategoryWeight(category);
-      const weightedCategoryScore = assessment.overallScore * (categoryWeight / 100);
-      
       balancing.weightsApplied[category] = {
         score: assessment.overallScore,
         weight: categoryWeight,
-        weightedScore: weightedCategoryScore,
+        weightedScore: assessment.overallScore * categoryWeight,
         significance: this.categorizeSignificance(assessment.overallScore)
       };
-      
       totalWeight += categoryWeight;
-      weightedScore += weightedCategoryScore;
-      
-      // Identify significant benefits and harms
-      if (assessment.overallScore >= 80) {
-        balancing.significantBenefits.push({
-          category: category,
-          score: assessment.overallScore,
-          description: this.generateBenefitDescription(category, assessment)
-        });
-      } else if (assessment.overallScore <= 30) {
-        balancing.significantHarms.push({
-          category: category,
-          score: assessment.overallScore,
-          description: this.generateHarmDescription(category, assessment)
-        });
+      weightedSum += assessment.overallScore * categoryWeight;
+      if (assessment.overallScore >= 75) {
+        balancing.significantBenefits.push({ category, score: assessment.overallScore, description: this.generateBenefitDescription(category, assessment) });
+      } else if (assessment.overallScore <= 25) {
+        balancing.significantHarms.push({ category, score: assessment.overallScore, description: this.generateHarmDescription(category, assessment) });
       }
     }
-
-    balancing.cumulativeScore = Math.round(weightedScore / totalWeight * 100) / 100;
+    balancing.cumulativeScore = totalWeight > 0 ? Math.round((weightedSum / totalWeight) * 100) / 100 : 50;
     balancing.overallBalance = this.determineOverallBalance(balancing.cumulativeScore, balancing.significantBenefits, balancing.significantHarms);
     balancing.balancingNarrative = this.generateBalancingNarrative(balancing);
 
@@ -543,13 +525,23 @@ export default class MaterialConsiderations {
   }
 
   determineOverallBalance(cumulativeScore, benefits, harms) {
-    if (harms.length > 0 && harms.some(h => h.score < 20)) {
-      return 'significant_harm_outweighs_benefits';
+    // Revised logic: compare relative proportions
+    const benefitCount = benefits.length;
+    const harmCount = harms.length;
+    if (harmCount === 0 && benefitCount === 0) return 'neutral_balance';
+    if (harmCount > 0 && benefitCount === 0) return 'significant_harm_outweighs_benefits';
+    if (benefitCount > 0 && harmCount === 0) return cumulativeScore >= 55 ? 'benefits_outweigh_harms' : 'neutral_balance';
+    // Mixed case
+    if (harmCount >= benefitCount + 2) return 'significant_harm_outweighs_benefits';
+    if (harmCount > benefitCount) return 'harms_outweigh_benefits';
+    if (benefitCount > harmCount) {
+      if (cumulativeScore >= 60) return 'benefits_outweigh_harms';
+      return 'neutral_balance';
     }
-    
-    if (cumulativeScore >= 70) return 'benefits_outweigh_harms';
-    if (cumulativeScore >= 50) return 'neutral_balance';
-    if (cumulativeScore >= 30) return 'harms_outweigh_benefits';
+    // Tie: lean on cumulative score band
+    if (cumulativeScore >= 60) return 'benefits_outweigh_harms';
+    if (cumulativeScore >= 45) return 'neutral_balance';
+    if (cumulativeScore >= 35) return 'harms_outweigh_benefits';
     return 'significant_harm_outweighs_benefits';
   }
 
