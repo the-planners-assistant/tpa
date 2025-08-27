@@ -1,1 +1,80 @@
 @import "tailwindcss";
+
+:root {
+  /* Custom colors */
+  --color-bg: #F8F9FA;
+  --color-fg: #111827;
+  --color-accent: #4F46E5;
+  --color-ok: #10B981;
+  --color-warn: #F59E0B;
+  --color-danger: #EF4444;
+}
+
+/* Custom utility classes for typography */
+.text-h1 {
+  font-size: 32px;
+  line-height: 1.2;
+}
+
+.text-h2 {
+  font-size: 24px;
+  line-height: 1.3;
+}
+
+.font-h1 {
+  font-weight: 600;
+}
+
+.font-h2 {
+  font-weight: 600;
+}
+
+/* Custom color classes */
+.text-accent {
+  color: var(--color-accent);
+}
+
+.bg-accent {
+  background-color: var(--color-accent);
+}
+
+.border-accent {
+  border-color: var(--color-accent);
+}
+
+.focus\:ring-accent:focus {
+  --tw-ring-color: var(--color-accent);
+}
+
+.focus\:border-accent:focus {
+  border-color: var(--color-accent);
+}
+
+/* Custom slider styling */
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--color-accent) 0%, var(--color-warn) 100%);
+  outline: none;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  cursor: pointer;
+}
+
+.slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  cursor: pointer;
+  border: none;
+}
