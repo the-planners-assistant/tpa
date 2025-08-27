@@ -4,7 +4,7 @@ export async function aiAnalysisPhase(agent, documentResults, spatialResults, as
     return { available: false, reason: 'No AI model configured' };
   }
 
-  agent.addTimelineEvent(assessment, 'ai_analysis_start', 'Starting enhanced AI-powered multimodal analysis');
+  agent.addTimelineEvent(assessment, 'ai_analysis_start', 'Starting enhanced AI-powered multimodal analysis with parallel processing');
   
   const results = { 
     textAnalysis: null, 
@@ -17,7 +17,10 @@ export async function aiAnalysisPhase(agent, documentResults, spatialResults, as
   };
 
   try {
-    // Phase 1: Enhanced text analysis with agentic retrieval
+    // Phase 1: Enhanced text analysis with agentic retrieval (sequential)
+    let developmentType = null;
+    let retrievalResults = null;
+    
     if (documentResults.chunks?.length) {
       agent.addTimelineEvent(assessment, 'ai_text_analysis', 'Analyzing document content with enhanced retrieval');
       
@@ -27,55 +30,104 @@ export async function aiAnalysisPhase(agent, documentResults, spatialResults, as
         coordinates: assessment.results?.address?.primaryAddress?.coordinates,
         developmentType: await agent.inferDevelopmentType(documentResults.chunks)
       };
+      developmentType = context.developmentType;
 
-      const retrievalResults = await agent.agenticRetrieve(
+      retrievalResults = await agent.agenticRetrieve(
         `planning analysis ${documentResults.extractedData?.description || 'development proposal'}`,
         context,
         { useAgentic: true }
       );
       results.retrievalResults = retrievalResults;
+    }
 
-      // Enhanced text analysis with retrieved context
-      results.textAnalysis = await agent.analyzeTextContentWithContext(
-        documentResults.chunks, 
-        retrievalResults.combined
+    // Phase 2: Parallel AI Analysis - Run multiple analyses simultaneously
+    agent.addTimelineEvent(assessment, 'ai_parallel_analysis', 'Running parallel AI analyses');
+    
+    const parallelAnalyses = [];
+    
+    // Text analysis with retrieved context
+    if (documentResults.chunks?.length) {
+      parallelAnalyses.push(
+        agent.analyzeTextContentWithContext(documentResults.chunks, retrievalResults.combined)
+          .then(result => ({ type: 'textAnalysis', result }))
+          .catch(error => ({ type: 'textAnalysis', error: error.message }))
       );
     }
-
-    // Phase 2: Image analysis (if images available)
+    
+    // Image analysis (if images available)
     if (documentResults.images?.length) {
-      agent.addTimelineEvent(assessment, 'ai_image_analysis', `Analyzing ${documentResults.images.length} images`);
-      results.imageAnalysis = await agent.analyzeImages(documentResults.images);
+      parallelAnalyses.push(
+        agent.analyzeImages(documentResults.images)
+          .then(result => ({ type: 'imageAnalysis', result }))
+          .catch(error => ({ type: 'imageAnalysis', error: error.message }))
+      );
+    }
+    
+    // Contextual analysis
+    parallelAnalyses.push(
+      agent.performEnhancedContextualAnalysis(documentResults, spatialResults, retrievalResults)
+        .then(result => ({ type: 'contextualAnalysis', result }))
+        .catch(error => ({ type: 'contextualAnalysis', error: error.message }))
+    );
+    
+    // Execute all parallel analyses
+    const parallelResults = await Promise.allSettled(parallelAnalyses);
+    
+    // Process parallel results
+    for (const settledResult of parallelResults) {
+      if (settledResult.status === 'fulfilled') {
+        const { type, result, error } = settledResult.value;
+        if (error) {
+          console.warn(`${type} failed:`, error);
+          agent.addTimelineEvent(assessment, `ai_${type}_error`, `${type} failed: ${error}`);
+        } else {
+          results[type] = result;
+          agent.addTimelineEvent(assessment, `ai_${type}_complete`, `${type} completed successfully`);
+        }
+      } else {
+        console.warn('Parallel analysis promise rejected:', settledResult.reason);
+      }
     }
 
-    // Phase 3: Contextual analysis with enhanced evidence
-    agent.addTimelineEvent(assessment, 'ai_contextual_analysis', 'Performing contextual analysis with evidence chains');
-    results.contextualAnalysis = await agent.performEnhancedContextualAnalysis(
-      documentResults, 
-      spatialResults, 
-      results.retrievalResults
-    );
+    // Phase 3: Sequential post-processing that depends on parallel results
+    agent.addTimelineEvent(assessment, 'ai_evidence_generation', 'Generating evidence chains');
+    
+    // Generate evidence chains and comprehensive assessment in parallel
+    const postProcessingPromises = [
+      agent.generateEvidenceChains(results.textAnalysis, results.contextualAnalysis, results.retrievalResults)
+        .then(result => ({ type: 'evidenceChains', result }))
+        .catch(error => ({ type: 'evidenceChains', error: error.message })),
+      
+      agent.performComprehensivePlanningAssessment(documentResults, spatialResults, results)
+        .then(result => ({ type: 'planningAssessment', result }))
+        .catch(error => ({ type: 'planningAssessment', error: error.message }))
+    ];
+    
+    const postProcessingResults = await Promise.allSettled(postProcessingPromises);
+    
+    // Process post-processing results
+    for (const settledResult of postProcessingResults) {
+      if (settledResult.status === 'fulfilled') {
+        const { type, result, error } = settledResult.value;
+        if (error) {
+          console.warn(`${type} failed:`, error);
+          results[type] = [];
+        } else {
+          results[type] = result;
+        }
+      }
+    }
 
-    // Phase 4: Generate evidence chains for key claims
-    results.evidenceChains = await agent.generateEvidenceChains(
-      results.textAnalysis,
-      results.contextualAnalysis,
-      results.retrievalResults
-    );
-
-    // Phase 5: Comprehensive planning assessment
-    agent.addTimelineEvent(assessment, 'ai_planning_assessment', 'Generating comprehensive planning assessment');
-    results.planningAssessment = await agent.performComprehensivePlanningAssessment(
-      documentResults, 
-      spatialResults, 
-      results
-    );
-
-    // Phase 6: Calculate overall confidence
+    // Phase 4: Calculate overall confidence
     results.confidence = agent.calculateEnhancedAIConfidence(results);
 
+    const completedAnalyses = Object.entries(results).filter(([key, value]) => 
+      value && !['confidence', 'retrievalResults'].includes(key)).length;
+    
     agent.addTimelineEvent(assessment, 'ai_analysis_complete', 
-      `Enhanced AI analysis completed with ${(results.confidence * 100).toFixed(0)}% confidence, ${results.evidenceChains.length} evidence chains generated`
+      `Enhanced AI analysis completed with ${(results.confidence * 100).toFixed(0)}% confidence, ` +
+      `${results.evidenceChains?.length || 0} evidence chains generated, ` +
+      `${completedAnalyses} analyses completed in parallel`
     );
 
   } catch (error) {

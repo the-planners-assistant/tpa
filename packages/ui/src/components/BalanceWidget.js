@@ -119,7 +119,7 @@ const BalanceWidget = ({
           const relatedCats = CATEGORY_DEFS.filter(c => Math.abs(cat.min - c.min) < 1.5); // Show nearby categories
           
           return (
-            <div key={item.name} className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
+            <div key={`${item.name}-${index}`} className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
               <div className="space-y-4">
                 {/* Header */}
                 <div className="flex items-start justify-between">

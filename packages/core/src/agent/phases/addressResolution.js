@@ -162,130 +162,91 @@ async function attemptLLMAddressResolution(agent, textContent, documentResults, 
     // Extract key information using pattern-based analysis first
     const keyInfo = summarizer.extractKeyInformation(textContent, documentTypeAnalysis.type);
     
-    // If we found addresses through pattern analysis, use them with geocoding
+    // If we found addresses through pattern analysis, use them with parallel geocoding
     if (keyInfo.addresses && keyInfo.addresses.length > 0) {
       agent.addTimelineEvent(assessment, 'pattern_addresses_found', 
         `Found ${keyInfo.addresses.length} addresses via pattern analysis`);
       
-      for (const address of keyInfo.addresses) {
+      // Parallel geocoding of all found addresses
+      const geocodePromises = keyInfo.addresses.map(async (address) => {
         const geocodeResult = await tryFreeGeocoding(address);
         if (geocodeResult) {
           return {
-            addresses: [{
-              rawText: address,
-              cleaned: address,
-              confidence: 0.8,
-              coordinates: geocodeResult.coordinates,
-              formattedAddress: geocodeResult.formattedAddress,
-              extractionMethod: 'pattern_analysis',
-              patternInfo: keyInfo
-            }],
-            primaryAddress: {
-              rawText: address,
-              cleaned: address,
-              confidence: 0.8,
-              coordinates: geocodeResult.coordinates,
-              formattedAddress: geocodeResult.formattedAddress,
-              extractionMethod: 'pattern_analysis',
-              patternInfo: keyInfo
-            },
-            hasValidAddress: true
+            address,
+            result: geocodeResult
           };
         }
+        return null;
+      });
+      
+      const geocodeResults = await Promise.all(geocodePromises);
+      const validResults = geocodeResults.filter(result => result !== null);
+      
+      if (validResults.length > 0) {
+        // Use the first valid geocoded address
+        const bestResult = validResults[0];
+        return {
+          addresses: validResults.map(r => ({
+            rawText: r.address,
+            cleaned: r.address,
+            confidence: 0.8,
+            coordinates: r.result.coordinates,
+            formattedAddress: r.result.formattedAddress,
+            extractionMethod: 'pattern_analysis',
+            patternInfo: keyInfo
+          })),
+          primaryAddress: {
+            rawText: bestResult.address,
+            cleaned: bestResult.address,
+            confidence: 0.8,
+            coordinates: bestResult.result.coordinates,
+            formattedAddress: bestResult.result.formattedAddress,
+            extractionMethod: 'pattern_analysis',
+            patternInfo: keyInfo
+          },
+          hasValidAddress: true
+        };
       }
     }
     
-    // If pattern analysis didn't work, use LLM with summarized content
+    // If pattern analysis didn't work, use parallel LLM approaches with summarized content
     const summaryResult = await summarizer.summarizeDocument(textContent, 2000);
     agent.addTimelineEvent(assessment, 'document_summarized', 
       `Document summarized using ${summaryResult.method} (${summaryResult.summary.length} chars)`);
+
+    // Try multiple LLM approaches in parallel for better accuracy
+    const llmPromises = [];
     
-    const prompt = `Analyze this ${documentTypeAnalysis.type} planning document and extract the site address and location information.
-
-Document summary: ${summaryResult.summary}
-
-Document type: ${documentTypeAnalysis.type}
-Confidence: ${(documentTypeAnalysis.confidence * 100).toFixed(1)}%
-
-Please extract:
-1. The complete site address including postcode
-2. Alternative address formats mentioned
-3. Nearby landmarks or references that could help with location
-4. Any coordinates or grid references mentioned
-5. Local authority or borough name
-6. Ward or district mentioned
-
-Format your response as JSON:
-{
-  "primaryAddress": "full address with postcode",
-  "alternativeAddresses": ["alternative 1", "alternative 2"],
-  "landmarks": ["landmark 1", "landmark 2"],
-  "coordinates": "if found",
-  "localAuthority": "council name",
-  "ward": "ward name",
-  "confidence": 0.8
-}`;
-
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${agent.config.googleApiKey}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{ text: prompt }]
-        }],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 1024
-        }
-      })
-    });
-
-    const result = await response.json();
+    // Approach 1: Standard address extraction
+    const standardPrompt = buildAddressExtractionPrompt(summaryResult.summary, documentTypeAnalysis);
+    llmPromises.push(callLLMForAddressExtraction(agent, standardPrompt, 'standard'));
     
-    if (result.candidates && result.candidates[0]) {
-      const analysisText = result.candidates[0].content.parts[0].text;
-      
-      // Extract JSON from the response
-      const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const extracted = JSON.parse(jsonMatch[0]);
-        
-        if (extracted.primaryAddress) {
-          // Try to geocode the LLM-extracted address
-          const geocodeResult = await tryFreeGeocoding(extracted.primaryAddress);
-          
-          if (geocodeResult) {
-            return {
-              addresses: [{
-                rawText: extracted.primaryAddress,
-                cleaned: extracted.primaryAddress,
-                confidence: extracted.confidence || 0.7,
-                coordinates: geocodeResult.coordinates,
-                formattedAddress: geocodeResult.formattedAddress,
-                extractionMethod: 'llm_with_summarization',
-                llmAnalysis: extracted,
-                documentType: documentTypeAnalysis.type,
-                summaryMethod: summaryResult.method
-              }],
-              primaryAddress: {
-                rawText: extracted.primaryAddress,
-                cleaned: extracted.primaryAddress,
-                confidence: extracted.confidence || 0.7,
-                coordinates: geocodeResult.coordinates,
-                formattedAddress: geocodeResult.formattedAddress,
-                extractionMethod: 'llm_with_summarization',
-                llmAnalysis: extracted,
-                documentType: documentTypeAnalysis.type,
-                summaryMethod: summaryResult.method
-              },
-              hasValidAddress: true
-            };
-          }
+    // Approach 2: Location-focused extraction if document is long enough
+    if (summaryResult.summary.length > 500) {
+      const locationPrompt = buildLocationFocusedPrompt(summaryResult.summary, documentTypeAnalysis);
+      llmPromises.push(callLLMForAddressExtraction(agent, locationPrompt, 'location_focused'));
+    }
+    
+    // Approach 3: If we have key sections, analyze them separately
+    if (keyInfo.sections && keyInfo.sections.length > 0) {
+      const sectionPrompt = buildSectionBasedPrompt(keyInfo.sections, documentTypeAnalysis);
+      llmPromises.push(callLLMForAddressExtraction(agent, sectionPrompt, 'section_based'));
+    }
+    
+    // Execute all LLM approaches in parallel
+    const llmResults = await Promise.allSettled(llmPromises);
+    
+    // Process results and find the best one
+    for (const result of llmResults) {
+      if (result.status === 'fulfilled' && result.value) {
+        const processedResult = await processLLMExtraction(result.value, agent);
+        if (processedResult && processedResult.hasValidAddress) {
+          return processedResult;
         }
       }
     }
+    
+    return null;
     
   } catch (error) {
     console.warn('LLM address analysis failed:', error);
@@ -507,5 +468,143 @@ async function attemptFallbackAddressResolution(agent, textContent, assessment) 
   }
   
   agent.addTimelineEvent(assessment, 'address_fallback_failed', 'All fallback address resolution strategies failed');
+  return null;
+}
+
+// Parallel LLM processing helper functions
+function buildAddressExtractionPrompt(summary, documentTypeAnalysis) {
+  return `Analyze this ${documentTypeAnalysis.type} planning document and extract the site address and location information.
+
+Document summary: ${summary}
+
+Document type: ${documentTypeAnalysis.type}
+Confidence: ${(documentTypeAnalysis.confidence * 100).toFixed(1)}%
+
+Please extract:
+1. The complete site address including postcode
+2. Alternative address formats mentioned
+3. Nearby landmarks or references that could help with location
+4. Any coordinates or grid references mentioned
+5. Local authority or borough name
+6. Ward or district mentioned
+
+Format your response as JSON:
+{
+  "primaryAddress": "full address with postcode",
+  "alternativeAddresses": ["alternative 1", "alternative 2"],
+  "landmarks": ["landmark 1", "landmark 2"],
+  "coordinates": "if found",
+  "localAuthority": "council name",
+  "ward": "ward name",
+  "confidence": 0.8
+}`;
+}
+
+function buildLocationFocusedPrompt(summary, documentTypeAnalysis) {
+  return `Focus specifically on location and geographical references in this ${documentTypeAnalysis.type} document.
+
+Document summary: ${summary}
+
+Extract all location information including:
+1. Primary site address
+2. Street names and numbers
+3. Postcode or postal areas
+4. Geographic coordinates
+5. Nearby roads, landmarks, or areas
+
+Return as JSON:
+{
+  "primaryAddress": "main address",
+  "coordinates": "lat,lng or grid ref",
+  "nearbyLandmarks": ["landmark1", "landmark2"],
+  "streetReferences": ["street1", "street2"],
+  "confidence": 0.8
+}`;
+}
+
+function buildSectionBasedPrompt(sections, documentTypeAnalysis) {
+  return `Analyze specific sections of this ${documentTypeAnalysis.type} document for address information.
+
+Key sections: ${sections.join(', ')}
+
+Focus on extracting the development site address from these sections.
+
+Return as JSON:
+{
+  "primaryAddress": "extracted address",
+  "sectionsAnalyzed": ["section1", "section2"],
+  "confidence": 0.8
+}`;
+}
+
+async function callLLMForAddressExtraction(agent, prompt, approach) {
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${agent.config.googleApiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{ text: prompt }]
+        }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 1024
+        }
+      })
+    });
+
+    const result = await response.json();
+    
+    if (result.candidates && result.candidates[0]) {
+      const analysisText = result.candidates[0].content.parts[0].text;
+      const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const extracted = JSON.parse(jsonMatch[0]);
+        return { extracted, approach };
+      }
+    }
+    return null;
+  } catch (error) {
+    console.warn(`LLM address extraction failed for approach ${approach}:`, error);
+    return null;
+  }
+}
+
+async function processLLMExtraction(llmResult, agent) {
+  if (!llmResult || !llmResult.extracted || !llmResult.extracted.primaryAddress) {
+    return null;
+  }
+
+  const { extracted, approach } = llmResult;
+  
+  // Try to geocode the LLM-extracted address
+  const geocodeResult = await tryFreeGeocoding(extracted.primaryAddress);
+  
+  if (geocodeResult) {
+    return {
+      addresses: [{
+        rawText: extracted.primaryAddress,
+        cleaned: extracted.primaryAddress,
+        confidence: extracted.confidence || 0.7,
+        coordinates: geocodeResult.coordinates,
+        formattedAddress: geocodeResult.formattedAddress,
+        extractionMethod: `llm_${approach}`,
+        llmAnalysis: extracted
+      }],
+      primaryAddress: {
+        rawText: extracted.primaryAddress,
+        cleaned: extracted.primaryAddress,
+        confidence: extracted.confidence || 0.7,
+        coordinates: geocodeResult.coordinates,
+        formattedAddress: geocodeResult.formattedAddress,
+        extractionMethod: `llm_${approach}`,
+        llmAnalysis: extracted
+      },
+      hasValidAddress: true
+    };
+  }
+  
   return null;
 }

@@ -51,9 +51,10 @@ export function ConstraintMap({ site, constraints = [] }) {
         new maplibregl.Marker({ element: markerEl }).setLngLat([site.coordinates.longitude, site.coordinates.latitude]).addTo(map);
       }
 
-      // Constraints collection
+      // Constraints collection - ensure constraints is an array
       const featCollection = { type: 'FeatureCollection', features: [] };
-      constraints.forEach(c => {
+      const constraintsArray = Array.isArray(constraints) ? constraints : [];
+      constraintsArray.forEach(c => {
         if (!c.geometry) return;
         const feature = { type: 'Feature', geometry: c.geometry, properties: { id: c.id, name: c.name, severity: c.severity, type: c.type } };
         featCollection.features.push(feature);

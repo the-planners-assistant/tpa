@@ -118,7 +118,7 @@ export default class MaterialConsiderations {
   }
 
   async assessIndividualConsideration(consideration, applicationData, spatialAnalysis, documentAnalysis) {
-    const assessment = {
+    let assessment = {
       id: consideration.id,
       description: consideration.description,
       category: consideration.category,

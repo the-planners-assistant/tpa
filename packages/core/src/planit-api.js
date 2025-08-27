@@ -10,7 +10,7 @@ export default class PlanItAPI {
 
   async _fetch(path, params = {}, { force = false } = {}) {
     const directUrl = new URL(path, this.baseUrl);
-    Object.entries(params).forEach(([k, v]) => (v !== undefined && v !== null && v !== '') && url.searchParams.append(k, v));
+    Object.entries(params).forEach(([k, v]) => (v !== undefined && v !== null && v !== '') && directUrl.searchParams.append(k, v));
     const k = this._key(path, params);
     const now = Date.now();
     if (!force && this.cache.has(k)) {

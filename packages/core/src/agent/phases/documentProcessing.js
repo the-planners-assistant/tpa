@@ -36,16 +36,23 @@ export async function processDocumentsPhase(agent, documentFiles, assessment) {
         const rawChunks = agent.parser.chunk(parseResult.text, 1800, 250);
         parseResult.chunks = rawChunks.map((c, idx) => ({ id: `${file.name}-chunk-${idx}`, content: c, metadata: { source: file.name, index: idx } }));
       }
-      // Embed chunks once (avoid duplicate push)
+      // Embed chunks once (avoid duplicate push) - PARALLEL PROCESSING
       if (parseResult.chunks && parseResult.chunks.length && !parseResult.__embedded) {
-        for (const chunk of parseResult.chunks) {
+        const embeddingPromises = parseResult.chunks.map(async (chunk, index) => {
           try {
-            if (!chunk.embedding) chunk.embedding = await agent.embedder.embed(chunk.content.slice(0, 5000));
-            results.chunks.push({ content: chunk.content, embedding: chunk.embedding, metadata: chunk.metadata });
+            if (!chunk.embedding) {
+              chunk.embedding = await agent.embedder.embed(chunk.content.slice(0, 5000));
+            }
+            return { content: chunk.content, embedding: chunk.embedding, metadata: chunk.metadata };
           } catch (embErr) {
-            console.warn('Embedding failed for chunk', chunk.id, embErr.message);
+            console.warn(`Embedding failed for chunk ${chunk.id || index}:`, embErr.message);
+            return { content: chunk.content, embedding: null, metadata: chunk.metadata };
           }
-        }
+        });
+        
+        // Process all embeddings in parallel
+        const embeddedChunks = await Promise.all(embeddingPromises);
+        results.chunks.push(...embeddedChunks.filter(chunk => chunk.embedding !== null));
         parseResult.__embedded = true;
       }
       results.processed.push({ filename: file.name, type: parseResult.documentType, status: 'success', extractedData: parseResult.extractedData, imageCount: parseResult.images?.length || 0, chunkCount: parseResult.chunks?.length || 0 });

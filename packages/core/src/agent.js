@@ -445,9 +445,10 @@ class Agent {
       assessment.duration = assessment.endTime - assessment.startTime;
       this.addTimelineEvent(assessment, 'assessment_completed', `Assessment completed in ${this.formatDuration(assessment.duration)}`);
 
-      // Store in database
+      // Store in database (clean object to avoid ArrayBuffer issues)
       if (this.database) {
-        await this.database.assessments.add(assessment);
+        const cleanAssessment = this.sanitizeForStorage(assessment);
+        await this.database.assessments.add(cleanAssessment);
       }
 
       return assessment;
@@ -880,60 +881,95 @@ Provide a structured assessment including:
       if (this.model && options.useAgentic !== false) {
         const dataNeeds = await this.assessDataNeeds(query, context, localResults);
         
-        // Phase 3: Fetch additional data based on LLM assessment
+        // Phase 3: Fetch additional data in parallel based on LLM assessment
+        const dataFetchPromises = [];
+        
         if (dataNeeds.needsPlanItData) {
-          try {
-            const planItResp = await this.planItAPI.searchApplications({ search: query, pg_sz: 20 });
-            retrievalResults.planIt = planItResp?.records || [];
-          } catch (e) {
-            console.warn('PlanIt search failed:', e.message);
-          }
+          dataFetchPromises.push(
+            this.planItAPI.searchApplications({ search: query, pg_sz: 20 })
+              .then(planItResp => ({ type: 'planIt', data: planItResp?.records || [] }))
+              .catch(e => {
+                console.warn('PlanIt search failed:', e.message);
+                return { type: 'planIt', data: [] };
+              })
+          );
         }
 
         if (dataNeeds.needsPolicyData && context.authority) {
-          try {
-            const policies = await this.fetchLocalPlanPolicies(context.authority);
-            const relevantPolicies = policies.filter(p => 
-              this.isRelevantPolicy(p, query, context)
-            ).slice(0, 10);
-            retrievalResults.policies = relevantPolicies;
-          } catch (e) {
-            console.warn('Policy fetch failed:', e.message);
-          }
+          dataFetchPromises.push(
+            this.fetchLocalPlanPolicies(context.authority)
+              .then(policies => {
+                const relevantPolicies = policies.filter(p => 
+                  this.isRelevantPolicy(p, query, context)
+                ).slice(0, 10);
+                return { type: 'policies', data: relevantPolicies };
+              })
+              .catch(e => {
+                console.warn('Policy fetch failed:', e.message);
+                return { type: 'policies', data: [] };
+              })
+          );
         }
 
         if (dataNeeds.needsConstraintData && context.coordinates) {
-          try {
-            const constraintResults = await this.spatialAnalyzer.queryConstraints(
-              context.coordinates, 
-              dataNeeds.constraintTypes || ['conservationAreas', 'listedBuildings', 'floodZones']
-            );
-            retrievalResults.constraints = constraintResults;
-          } catch (e) {
-            console.warn('Constraint query failed:', e.message);
-          }
+          dataFetchPromises.push(
+            // Ensure spatial analyzer is initialized before querying constraints
+            Promise.resolve().then(async () => {
+              if (!this.spatialAnalyzer.initialized) {
+                await this.spatialAnalyzer.initialize();
+              }
+              return this.spatialAnalyzer.queryConstraints(
+                context.coordinates, 
+                dataNeeds.constraintTypes || ['conservationAreas', 'listedBuildings', 'floodZones']
+              );
+            })
+              .then(constraintResults => ({ type: 'constraints', data: constraintResults }))
+              .catch(e => {
+                console.warn('Constraint query failed:', e.message);
+                return { type: 'constraints', data: [] };
+              })
+          );
         }
 
         if (dataNeeds.needsPrecedentData) {
-          try {
-            const precedents = await this.searchSimilarCases(query, context);
-            retrievalResults.precedents = precedents;
-          } catch (e) {
-            console.warn('Precedent search failed:', e.message);
-          }
+          dataFetchPromises.push(
+            this.searchSimilarCases(query, context)
+              .then(precedents => ({ type: 'precedents', data: precedents }))
+              .catch(e => {
+                console.warn('Precedent search failed:', e.message);
+                return { type: 'precedents', data: [] };
+              })
+          );
         }
 
-        // Phase 4: Additional targeted searches based on LLM recommendations
+        // Phase 4: Additional targeted searches in parallel
         if (dataNeeds.additionalQueries && dataNeeds.additionalQueries.length > 0) {
-          for (const additionalQuery of dataNeeds.additionalQueries.slice(0, 3)) {
-            try {
-              const additionalResults = await this.executeTargetedSearch(additionalQuery, context);
-              retrievalResults.additionalData.push({
+          const additionalSearchPromises = dataNeeds.additionalQueries.slice(0, 3).map(additionalQuery =>
+            this.executeTargetedSearch(additionalQuery, context)
+              .then(additionalResults => ({
+                type: 'additionalData',
                 query: additionalQuery,
-                results: additionalResults
-              });
-            } catch (e) {
-              console.warn(`Additional search failed for query "${additionalQuery}":`, e.message);
+                data: additionalResults
+              }))
+              .catch(e => {
+                console.warn(`Additional search failed for query "${additionalQuery}":`, e.message);
+                return { type: 'additionalData', query: additionalQuery, data: [] };
+              })
+          );
+          dataFetchPromises.push(...additionalSearchPromises);
+        }
+
+        // Execute all data fetches in parallel
+        const dataFetchResults = await Promise.allSettled(dataFetchPromises);
+        
+        // Process parallel fetch results
+        for (const settledResult of dataFetchResults) {
+          if (settledResult.status === 'fulfilled') {
+            const { type, data, query } = settledResult.value;
+            if (type === 'additionalData') {
+              retrievalResults.additionalData.push({ query, results: data });
+            } else {
+              retrievalResults[type] = data;
             }
           }
         }
@@ -947,8 +983,18 @@ Provide a structured assessment including:
 
     } catch (error) {
       console.error('Agentic retrieval failed:', error);
-      // Fallback to basic hybrid search
-      return this.hybridRetrieve(query, options);
+      // Fallback to basic search
+      const localResults = await this.searchVectorStore(query);
+      return {
+        local: localResults,
+        planIt: [],
+        policies: [],
+        constraints: [],
+        precedents: [],
+        additionalData: [],
+        combined: localResults.slice(0, 5),
+        retrievalStrategy: 'fallback'
+      };
     }
   }
 
@@ -1223,11 +1269,20 @@ Respond in JSON format:
   const parseResult = await this.parser.parse(dataBuffer);
       
       if (parseResult.chunks) {
-        for (const chunk of parseResult.chunks) {
-          const embedding = await this.embedder.embed(chunk.content);
-          if (!this.vectorStore) this.vectorStore = [];
-          this.vectorStore.push({ text: chunk.content, embedding });
-        }
+        // Parallel embedding generation for vector store
+        const embeddingPromises = parseResult.chunks.map(async (chunk) => {
+          try {
+            const embedding = await this.embedder.embed(chunk.content);
+            return { text: chunk.content, embedding };
+          } catch (error) {
+            console.warn('Vector store embedding failed for chunk:', error.message);
+            return null;
+          }
+        });
+        
+        const embeddings = await Promise.all(embeddingPromises);
+        if (!this.vectorStore) this.vectorStore = [];
+        this.vectorStore.push(...embeddings.filter(item => item !== null));
       }
     };
     reader.readAsArrayBuffer(file);
@@ -1713,6 +1768,45 @@ Respond in JSON format:
     }
     
     return null;
+  }
+
+  /**
+   * Sanitize assessment object for storage by removing non-serializable data
+   */
+  sanitizeForStorage(assessment) {
+    // Deep clone and remove problematic data types
+    const sanitized = JSON.parse(JSON.stringify(assessment, (key, value) => {
+      // Remove ArrayBuffers, Functions, and other non-serializable types
+      if (value instanceof ArrayBuffer || 
+          value instanceof Uint8Array ||
+          value instanceof Blob ||
+          value instanceof File ||
+          typeof value === 'function') {
+        return '[Removed for storage]';
+      }
+      
+      // Convert large objects to summaries
+      if (key === 'vectorStore' && Array.isArray(value)) {
+        return `[Vector store with ${value.length} embeddings]`;
+      }
+      
+      if (key === 'rawContent' && typeof value === 'string' && value.length > 1000) {
+        return value.substring(0, 1000) + '... [truncated for storage]';
+      }
+      
+      // Remove large binary data
+      if (key === 'embedding' && Array.isArray(value) && value.length > 100) {
+        return `[Embedding vector, length: ${value.length}]`;
+      }
+      
+      return value;
+    }));
+    
+    // Add storage metadata
+    sanitized.storedAt = new Date().toISOString();
+    sanitized.storageVersion = '1.0';
+    
+    return sanitized;
   }
 }
 
