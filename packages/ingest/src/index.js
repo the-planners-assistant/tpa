@@ -76,8 +76,61 @@ class Parser {
     if (!this.pdfjsLib) {
       throw new Error('PDF.js is not available in this environment');
     }
+    // Normalise incoming data (caller may have passed an object with { data, name })
+    let raw = dataBuffer;
+    if (raw && raw.data instanceof ArrayBuffer) {
+      raw = raw.data;
+    } else if (raw && raw.data && raw.data.buffer instanceof ArrayBuffer) {
+      // Some libraries wrap again
+      raw = raw.data.buffer;
+    } else if (raw && raw.buffer instanceof ArrayBuffer && !(raw instanceof ArrayBuffer)) {
+      // Could be a view (e.g. Uint8Array)
+      raw = raw.buffer;
+    }
 
-    const pdf = await this.pdfjsLib.getDocument({ data: dataBuffer }).promise;
+    if (!(raw instanceof ArrayBuffer)) {
+      throw new Error('Unsupported PDF input: expected ArrayBuffer or { data: ArrayBuffer }');
+    }
+
+    // Ensure we give pdf.js a Uint8Array (more reliable for structure checks)
+    let uint8 = new Uint8Array(raw);
+
+    // Quick magic header verification (%PDF)
+    if (!(uint8[0] === 0x25 && uint8[1] === 0x50 && uint8[2] === 0x44 && uint8[3] === 0x46)) {
+      // Sometimes first bytes may include BOM or junk; attempt to locate '%PDF'
+      const textSample = new TextDecoder().decode(uint8.slice(0, 1024));
+      const idx = textSample.indexOf('%PDF');
+      if (idx > 0) {
+        // Realign by trimming leading junk
+        uint8 = uint8.slice(idx);
+      }
+    }
+
+    let pdf;
+    try {
+      pdf = await this.pdfjsLib.getDocument({ data: uint8 }).promise;
+    } catch (err) {
+      // Retry once with disableWorker fallback if structure error occurs
+      const msg = String(err && err.message || err);
+      if (/Invalid PDF structure/i.test(msg) && !this.pdfjsLib.disableWorker) {
+        console.warn('Retrying PDF parse with worker disabled due to structure error');
+        try {
+          this.pdfjsLib.disableWorker = true;
+          pdf = await this.pdfjsLib.getDocument({ data: uint8 }).promise;
+        } catch (err2) {
+          // Final diagnostic dump (non-fatal exposure limited to console)
+          const head = Array.from(uint8.slice(0, 16)).map(b => b.toString(16).padStart(2,'0')).join(' ');
+          console.error('PDF parse failed after retry. Size(bytes)=', uint8.length, 'Head=', head, err2);
+          throw new Error('PDF parse failed (after retry): ' + (err2.message || err2));
+        }
+      } else {
+        if (/Invalid PDF structure/i.test(msg)) {
+          const head = Array.from(uint8.slice(0, 16)).map(b => b.toString(16).padStart(2,'0')).join(' ');
+          console.error('Invalid PDF structure (no retry path). Size(bytes)=', uint8.length, 'Head=', head);
+        }
+        throw err;
+      }
+    }
     const numPages = pdf.numPages;
     
     const result = {

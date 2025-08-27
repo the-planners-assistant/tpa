@@ -3,10 +3,13 @@
  * Integrates with planning.data.gov.uk API for official UK planning constraints
  */
 class PlanningDataAPI {
-  constructor() {
+  constructor(opts = {}) {
     this.baseUrl = 'https://www.planning.data.gov.uk';
     this.cache = new Map();
     this.cacheTimeout = 24 * 60 * 60 * 1000; // 24 hours
+    // Snapshot fallback (for static hosting / GitHub Pages where CORS blocks direct fetch)
+    this.useLocalSnapshot = opts.useLocalSnapshot !== false; // default true
+    this.localSnapshotPath = opts.localSnapshotPath || '/planning-data/dataset.snapshot.json';
   }
 
   /**
@@ -28,26 +31,26 @@ class PlanningDataAPI {
    */
   async getDatasets() {
     const cacheKey = 'datasets';
+    if (!this.cache) this.cache = new Map();
     const cached = this.cache.get(cacheKey);
-    
-    if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
-      return cached.data;
+    if (cached && Date.now() - cached.timestamp < this.cacheTimeout) return cached.data;
+
+    // 1. Try live fetch first
+    let datasets = await this._safeJsonFetch(`${this.baseUrl}/dataset.json`, { retries: 0 });
+
+    // 2. Fallback to snapshot if live failed / blocked and enabled
+    if ((!datasets || !Array.isArray(datasets)) && this.useLocalSnapshot && typeof window !== 'undefined') {
+      try {
+        const snapshot = await this._safeJsonFetch(this.localSnapshotPath, { retries: 0 });
+        if (Array.isArray(snapshot)) datasets = snapshot;
+      } catch (_) {}
     }
 
-    try {
-      const response = await fetch(`${this.baseUrl}/dataset.json`);
-      const datasets = await response.json();
-      
-      this.cache.set(cacheKey, {
-        data: datasets,
-        timestamp: Date.now()
-      });
-      
+    if (Array.isArray(datasets)) {
+      this.cache.set(cacheKey, { data: datasets, timestamp: Date.now() });
       return datasets;
-    } catch (error) {
-      console.error('Failed to fetch datasets:', error);
-      return [];
     }
+    return [];
   }
 
   /**
@@ -64,14 +67,8 @@ class PlanningDataAPI {
       datasets.forEach(dataset => params.append('dataset', dataset));
     }
 
-    try {
-      const response = await fetch(`${this.baseUrl}/entity.json?${params}`);
-      const result = await response.json();
-      return result.entities || [];
-    } catch (error) {
-      console.error('Failed to search by location:', error);
-      return [];
-    }
+  const result = await this._safeJsonFetch(`${this.baseUrl}/entity.json?${params}`);
+  return result?.entities || [];
   }
 
   /**
@@ -88,27 +85,16 @@ class PlanningDataAPI {
       datasets.forEach(dataset => params.append('dataset', dataset));
     }
 
-    try {
-      const response = await fetch(`${this.baseUrl}/entity.json?${params}`);
-      const result = await response.json();
-      return result.entities || [];
-    } catch (error) {
-      console.error('Failed to search by geometry:', error);
-      return [];
-    }
+  const result = await this._safeJsonFetch(`${this.baseUrl}/entity.json?${params}`);
+  return result?.entities || [];
   }
 
   /**
    * Get specific entity by ID
    */
   async getEntity(entityId) {
-    try {
-      const response = await fetch(`${this.baseUrl}/entity/${entityId}.json`);
-      return await response.json();
-    } catch (error) {
-      console.error(`Failed to get entity ${entityId}:`, error);
-      return null;
-    }
+  const result = await this._safeJsonFetch(`${this.baseUrl}/entity/${entityId}.json`);
+  return result || null;
   }
 
   /**
@@ -121,14 +107,8 @@ class PlanningDataAPI {
       offset: offset.toString()
     });
 
-    try {
-      const response = await fetch(`${this.baseUrl}/entity.json?${params}`);
-      const result = await response.json();
-      return result.entities || [];
-    } catch (error) {
-      console.error(`Failed to get entities for dataset ${dataset}:`, error);
-      return [];
-    }
+  const result = await this._safeJsonFetch(`${this.baseUrl}/entity.json?${params}`);
+  return result?.entities || [];
   }
 
   /**
@@ -396,6 +376,42 @@ class PlanningDataAPI {
    */
   clearCache() {
     this.cache.clear();
+  }
+
+  /** Internal: robust fetch with timeout and JSON parsing */
+  async _safeJsonFetch(url, { timeout = 15000, retries = 1 } = {}) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeout);
+      try {
+        let targetUrl = url;
+        let res;
+        try {
+          res = await fetch(targetUrl, { signal: controller.signal, headers: { 'Accept': 'application/json' } });
+        } catch (networkErr) {
+          // If browser-side CORS block and proxy configured, retry through proxy once per attempt
+          if (typeof window !== 'undefined' && process && process.env && process.env.NEXT_PUBLIC_CORS_PROXY) {
+            const proxy = process.env.NEXT_PUBLIC_CORS_PROXY;
+            targetUrl = `${proxy}${encodeURIComponent(url)}`;
+            res = await fetch(targetUrl, { signal: controller.signal, headers: { 'Accept': 'application/json' } });
+          } else {
+            throw networkErr;
+          }
+        }
+        clearTimeout(id);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        try { return JSON.parse(text); } catch (e) { throw new Error('Invalid JSON'); }
+      } catch (err) {
+        clearTimeout(id);
+        if (attempt === retries) {
+          console.error(`PlanningDataAPI fetch failed (${url}):`, err.message);
+          return null;
+        }
+        await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
+      }
+    }
+    return null;
   }
 }
 

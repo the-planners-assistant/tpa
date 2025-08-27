@@ -4,7 +4,7 @@ class Database extends Dexie {
   constructor() {
     super('TPADatabase');
     
-    this.version(1).stores({
+  this.version(1).stores({
       // Document storage
       documents: '++id, name, type, uploadDate, localAuthorityId, applicationRef, size, hash',
       chunks: '++id, documentId, content, embedding, metadata, chunkIndex, confidence',
@@ -29,6 +29,12 @@ class Database extends Dexie {
       visualAnalysis: '++id, assessmentId, imageId, findings, confidence, aiModel'
     });
 
+    // Version 2: PlanIt integration tables
+    this.version(2).stores({
+      planitApplications: '++id, applicationId, reference, authority, receivedDate, status',
+      planitPolicies: '++id, policyId, authority, reference, category'
+    });
+
     this.documents = this.table('documents');
     this.chunks = this.table('chunks');
     this.policies = this.table('policies');
@@ -42,6 +48,13 @@ class Database extends Dexie {
     this.localAuthorityData = this.table('localAuthorityData');
     this.extractedImages = this.table('extractedImages');
     this.visualAnalysis = this.table('visualAnalysis');
+    // Optional PlanIt tables (v2)
+    if (this.tables.find(t => t.name === 'planitApplications')) {
+      this.planitApplications = this.table('planitApplications');
+    }
+    if (this.tables.find(t => t.name === 'planitPolicies')) {
+      this.planitPolicies = this.table('planitPolicies');
+    }
   }
 
   async initialize() {
@@ -54,6 +67,30 @@ class Database extends Dexie {
     }
     
     return this;
+  }
+
+  async upsertPlanItApplications(apps=[]) {
+    if (!apps.length || !this.planitApplications) return 0;
+    const mapped = apps.map(a => ({
+  applicationId: a.name || a.id || a.uid || a.reference,
+  reference: a.reference || a.name || a.uid,
+  authority: a.area_name || a.authority || a.lpa || a.local_authority || '',
+  receivedDate: a.start_date || a.received || a.received_date || null,
+  status: a.app_state || a.status || a.stage || '',
+      raw: a
+    }));
+    await this.planitApplications.bulkPut(mapped);
+    return mapped.length;
+  }
+
+  async searchCachedApplications(query, limit=20) {
+    if (!this.planitApplications) return [];
+    const lower = query.toLowerCase();
+    const all = await this.planitApplications.toArray();
+    return all.filter(a => (
+      (a.reference && a.reference.toLowerCase().includes(lower)) ||
+      (a.authority && a.authority.toLowerCase().includes(lower))
+    )).slice(0, limit);
   }
 
   async seedMaterialConsiderations() {

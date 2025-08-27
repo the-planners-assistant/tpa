@@ -8,6 +8,18 @@ import MaterialConsiderations from './material-considerations.js';
 import EvidenceEngine from './evidence-engine.js';
 import AddressExtractor from './address-extractor.js';
 import PlanningDataAPI from './planning-data-api.js';
+import PlanItAPI from './planit-api.js';
+import LocalAuthorityManager from './local-authority-manager.js';
+import ImageRetriever from './image-retriever.js';
+// Phase modules
+import { processDocumentsPhase } from './agent/phases/documentProcessing.js';
+import { resolveAddressPhase } from './agent/phases/addressResolution.js';
+import { spatialAnalysisPhase } from './agent/phases/spatialAnalysis.js';
+import { aiAnalysisPhase } from './agent/phases/aiAnalysis.js';
+import { materialConsiderationsPhase } from './agent/phases/materialConsiderations.js';
+import { evidenceCompilationPhase } from './agent/phases/evidenceCompilation.js';
+import { decisionSynthesisPhase } from './agent/phases/decisionSynthesis.js';
+import { reportGenerationPhase } from './agent/phases/reportGeneration.js';
 
 /**
  * Enhanced Agent Orchestrator
@@ -65,6 +77,9 @@ class Agent {
     this.evidenceEngine = new EvidenceEngine(this.database, this.spatialAnalyzer);
     this.addressExtractor = new AddressExtractor();
     this.planningDataAPI = new PlanningDataAPI();
+  this.planItAPI = new PlanItAPI();
+  this.localAuthorities = new LocalAuthorityManager(this.database, this.planItAPI);
+  this.imageRetriever = new ImageRetriever();
     
     // Configure components with API keys
     if (this.config.googleApiKey) {
@@ -104,9 +119,11 @@ class Agent {
     try {
       await this.database.initialize();
       await this.materialConsiderations.initialize();
+  await this.localAuthorities.seedAuthorities();
       if (this.planningDataAPI && typeof this.planningDataAPI.initialize === 'function') {
         await this.planningDataAPI.initialize();
       }
+  // PlanIt API has no explicit initialize; lazy warm optional
       
       this.initialized = true;
       console.log('TPA Agent initialized successfully');
@@ -114,6 +131,34 @@ class Agent {
       console.error('Failed to initialize TPA Agent:', error);
       throw error;
     }
+  }
+
+  /** Search planning applications via PlanIt API with local cache fallback */
+  async searchPlanItApplications(query, options = {}) {
+    await this.initPromise;
+    if (!query || query.trim().length < 2) return { query, results: [] };
+    try {
+      const data = await this.planItAPI.searchApplications(query.trim(), options);
+      const list = data?.results || data || [];
+      if (this.database?.upsertPlanItApplications) {
+        await this.database.upsertPlanItApplications(list);
+      }
+      return { query, results: list, cached: false };
+    } catch (error) {
+      console.warn('PlanIt search failed, cache fallback:', error.message);
+      const cached = await this.database.searchCachedApplications(query, options.limit || 20);
+      return { query, results: cached, cached: true, error: error.message };
+    }
+  }
+
+  // Local authority helpers
+  async syncLocalAuthority(name){
+    await this.initPromise;
+    return this.localAuthorities.syncAuthority(name);
+  }
+  async fetchLocalPlanPolicies(authority){
+    await this.initPromise;
+    return this.localAuthorities.fetchLocalPlanPolicies(authority);
   }
 
   generateConditionsSection(assessment) {
@@ -235,14 +280,14 @@ class Agent {
       assessment.status = 'processing_documents';
       this.addTimelineEvent(assessment, 'phase_1_start', 'Starting document processing');
       
-      const documentResults = await this.processDocuments(documentFiles, assessmentId);
+  const documentResults = await processDocumentsPhase(this, documentFiles, assessment);
       assessment.results.documents = documentResults;
       
       // Phase 2: Address Resolution and Site Identification
       assessment.status = 'resolving_address';
       this.addTimelineEvent(assessment, 'phase_2_start', 'Resolving site address and location');
       
-      const addressResults = await this.resolveAddress(documentResults, assessmentId);
+  const addressResults = await resolveAddressPhase(this, documentResults, assessment);
       assessment.results.address = addressResults;
 
       if (!addressResults.primaryAddress || !addressResults.primaryAddress.coordinates) {
@@ -253,49 +298,43 @@ class Agent {
       assessment.status = 'spatial_analysis';
       this.addTimelineEvent(assessment, 'phase_3_start', 'Conducting spatial analysis');
       
-      const spatialResults = await this.conductSpatialAnalysis(
-        addressResults.primaryAddress.coordinates,
-        assessmentId
-      );
+      const spatialResults = await spatialAnalysisPhase(this, addressResults.primaryAddress.coordinates, assessment);
       assessment.results.spatial = spatialResults;
+      // Imagery fallback phase (if no images extracted earlier)
+      if (!assessment.results.media) assessment.results.media = {};
+      if (!assessment.results.media.imagesFromPdf || assessment.results.media.imagesFromPdf.length === 0) {
+        const retrieved = await this.imageRetriever.retrieve(addressResults.primaryAddress.coordinates);
+        assessment.results.media.retrievedImages = retrieved.images;
+        assessment.results.media.allImages = retrieved.images;
+        this.addTimelineEvent(assessment, 'imagery_retrieved', `Retrieved ${retrieved.retrievedCount} supplementary images`);
+      }
 
       // Phase 4: AI-Powered Multimodal Analysis
       assessment.status = 'ai_analysis';
       this.addTimelineEvent(assessment, 'phase_4_start', 'Performing AI analysis');
       
-      const aiResults = await this.performAIAnalysis(documentResults, spatialResults, assessmentId);
+  const aiResults = await aiAnalysisPhase(this, documentResults, spatialResults, assessment);
       assessment.results.ai = aiResults;
 
       // Phase 5: Material Considerations Assessment
       assessment.status = 'material_considerations';
       this.addTimelineEvent(assessment, 'phase_5_start', 'Assessing material considerations');
       
-      const materialResults = await this.assessMaterialConsiderations(
-        documentResults,
-        spatialResults,
-        aiResults,
-        assessmentId
-      );
+  const materialResults = await materialConsiderationsPhase(this, documentResults, spatialResults, aiResults, assessment);
       assessment.results.material = materialResults;
 
       // Phase 6: Evidence Compilation and Validation
       assessment.status = 'evidence_compilation';
       this.addTimelineEvent(assessment, 'phase_6_start', 'Compiling and validating evidence');
       
-      const evidenceResults = await this.compileEvidence(
-        documentResults,
-        spatialResults,
-        aiResults,
-        materialResults,
-        assessmentId
-      );
+  const evidenceResults = await evidenceCompilationPhase(this, documentResults, spatialResults, aiResults, materialResults, assessmentId, assessment);
       assessment.results.evidence = evidenceResults;
 
       // Phase 7: Decision Synthesis and Recommendation
       assessment.status = 'decision_synthesis';
       this.addTimelineEvent(assessment, 'phase_7_start', 'Synthesizing decision recommendation');
       
-      const recommendation = await this.synthesizeRecommendation(assessment, assessmentId);
+  const recommendation = await decisionSynthesisPhase(this, assessment, assessmentId);
       assessment.recommendation = recommendation;
       assessment.confidence = recommendation.confidence;
 
@@ -303,7 +342,7 @@ class Agent {
       assessment.status = 'report_generation';
       this.addTimelineEvent(assessment, 'phase_8_start', 'Generating comprehensive report');
       
-      const report = await this.generateReport(assessment, assessmentId);
+  const report = await reportGenerationPhase(this, assessment, assessmentId);
       assessment.results.report = report;
 
       // Finalization
@@ -334,543 +373,41 @@ class Agent {
       this.activeAssessments.delete(assessmentId);
     }
   }
-
-  async processDocuments(documentFiles, assessmentId) {
-    const results = {
-      processed: [],
-      totalDocuments: documentFiles.length,
-      extractedData: {},
-      images: [],
-      chunks: [],
-      addresses: [],
-      planningRefs: []
-    };
-
-    for (let i = 0; i < documentFiles.length; i++) {
-      const file = documentFiles[i];
-      
-      try {
-        this.addTimelineEvent(
-          this.activeAssessments.get(assessmentId),
-          'document_processing',
-          `Processing document: ${file.name}`
-        );
-        // Support multiple input shapes: File, {buffer}, {data}, ArrayBuffer
-        let dataBuffer = null;
-        if (file instanceof ArrayBuffer) {
-          dataBuffer = file;
-        } else if (file.buffer instanceof ArrayBuffer) {
-          dataBuffer = file.buffer;
-        } else if (file.data instanceof ArrayBuffer) {
-          dataBuffer = file.data;
-        } else if (typeof file.arrayBuffer === 'function') {
-          dataBuffer = await file.arrayBuffer();
-        } else {
-          throw new Error('Unsupported document input format');
-        }
-
-        const parseResult = await this.parser.parse(dataBuffer);
-        
-        results.processed.push({
-          filename: file.name,
-          type: parseResult.documentType,
-          status: 'success',
-          extractedData: parseResult.extractedData,
-          imageCount: parseResult.images ? parseResult.images.length : 0,
-          chunkCount: parseResult.chunks ? parseResult.chunks.length : 0
-        });
-
-        // Accumulate results
-        if (parseResult.extractedData) {
-          results.extractedData = this.mergeExtractedData(results.extractedData, parseResult.extractedData);
-        }
-
-        if (parseResult.images) {
-          results.images.push(...parseResult.images);
-        }
-
-        if (parseResult.chunks) {
-          results.chunks.push(...parseResult.chunks);
-        }
-
-        if (parseResult.addresses) {
-          results.addresses.push(...parseResult.addresses);
-        }
-
-        if (parseResult.planningApplicationRefs) {
-          results.planningRefs.push(...parseResult.planningApplicationRefs);
-        }
-
-      } catch (error) {
-        console.error(`Failed to process document ${file.name}:`, error);
-        results.processed.push({
-          filename: file.name,
-          status: 'error',
-          error: error.message
-        });
-      }
-    }
-
-    return results;
-  }
-
-  async resolveAddress(documentResults, assessmentId) {
-    // Extract addresses from all sources
-    const allAddresses = [...documentResults.addresses];
-    
-    // Add any addresses from extracted data
-    if (documentResults.extractedData.addresses) {
-      allAddresses.push(...documentResults.extractedData.addresses);
-    }
-
-    if (allAddresses.length === 0) {
-      throw new Error('No addresses found in documents');
-    }
-
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'address_extraction',
-      `Found ${allAddresses.length} potential addresses`
-    );
-
-    // Use address extractor to resolve and geocode
-    const addressResult = await this.addressExtractor.extractAddresses(
-      allAddresses.join(' ')
-    );
-
-    if (!addressResult.hasValidAddress) {
-      throw new Error('No valid addresses could be resolved');
-    }
-
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'address_resolved',
-      `Resolved address: ${addressResult.primaryAddress.formattedAddress}`
-    );
-
-    return addressResult;
-  }
-
-  async conductSpatialAnalysis(coordinates, assessmentId) {
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'spatial_analysis_start',
-      'Starting comprehensive spatial analysis'
-    );
-
-    // Perform spatial analysis
-    const spatialResult = await this.spatialAnalyzer.analyzeSite(coordinates);
-
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'spatial_analysis_complete',
-      `Identified ${Object.keys(spatialResult.intersections || {}).length} constraint types`
-    );
-
-    return spatialResult;
-  }
-
-  async performAIAnalysis(documentResults, spatialResults, assessmentId) {
-    if (!this.visionModel) {
-      return { available: false, reason: 'No AI model configured' };
-    }
-
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'ai_analysis_start',
-      'Starting AI-powered multimodal analysis'
-    );
-
-    const results = {
-      textAnalysis: null,
-      imageAnalysis: [],
-      contextualAnalysis: null,
-      planningAssessment: null,
-      confidence: 0
-    };
-
-    try {
-      // Analyze text content
-      if (documentResults.chunks && documentResults.chunks.length > 0) {
-        results.textAnalysis = await this.analyzeTextContent(documentResults.chunks);
-      }
-
-      // Analyze images
-      if (documentResults.images && documentResults.images.length > 0) {
-        results.imageAnalysis = await this.analyzeImages(documentResults.images);
-      }
-
-      // Contextual analysis combining all data
-      results.contextualAnalysis = await this.performContextualAnalysis(
-        documentResults,
-        spatialResults
-      );
-
-      // Comprehensive planning assessment
-      results.planningAssessment = await this.performPlanningAssessment(
-        documentResults,
-        spatialResults,
-        results
-      );
-
-      // Calculate overall confidence
-      results.confidence = this.calculateAIConfidence(results);
-
-      this.addTimelineEvent(
-        this.activeAssessments.get(assessmentId),
-        'ai_analysis_complete',
-        `AI analysis completed with ${(results.confidence * 100).toFixed(0)}% confidence`
-      );
-
-    } catch (error) {
-      console.error('AI analysis failed:', error);
-      results.error = error.message;
-      results.confidence = 0;
-    }
-
-    return results;
-  }
-
+  // Analysis helper methods used by AI phase modules
   async analyzeTextContent(chunks) {
     const combinedText = chunks.map(chunk => chunk.content).join('\n\n');
-    
-    const prompt = `
-Analyze the following planning application text content and extract key information:
-
-${combinedText.substring(0, 4000)} ${combinedText.length > 4000 ? '...[truncated]' : ''}
-
-Please provide a structured analysis covering:
-1. Development description and key characteristics
-2. Planning considerations mentioned
-3. Technical specifications (heights, areas, units, parking, etc.)
-4. Environmental considerations
-5. Access and transport arrangements
-6. Any heritage or conservation mentions
-7. Community benefits or impacts mentioned
-8. Identified risks or concerns
-
-Provide your response in a structured JSON format.
-`;
-
+    const prompt = `\nAnalyze the following planning application text content and extract key information:\n\n${combinedText.substring(0, 4000)} ${combinedText.length > 4000 ? '...[truncated]' : ''}\n\nPlease provide a structured analysis covering:\n1. Development description and key characteristics\n2. Planning considerations mentioned\n3. Technical specifications (heights, areas, units, parking, etc.)\n4. Environmental considerations\n5. Access and transport arrangements\n6. Any heritage or conservation mentions\n7. Community benefits or impacts mentioned\n8. Identified risks or concerns\n\nProvide your response in a structured JSON format.\n`;
     try {
       const result = await this.visionModel.generateContent(prompt);
       const response = await result.response;
       const text = response.text();
-      
-      // Try to parse as JSON, fallback to text
-      try {
-        return JSON.parse(text);
-      } catch {
-        return { analysis: text, format: 'text' };
-      }
-    } catch (error) {
-      console.error('Text analysis failed:', error);
-      return { error: error.message };
-    }
+      try { return JSON.parse(text); } catch { return { analysis: text, format: 'text' }; }
+    } catch (error) { console.error('Text analysis failed:', error); return { error: error.message }; }
   }
 
   async analyzeImages(images) {
     const results = [];
-
-    for (let i = 0; i < Math.min(images.length, 10); i++) { // Limit to 10 images
+    for (let i = 0; i < Math.min(images.length, 10); i++) {
       const image = images[i];
-      
       try {
-        const prompt = `
-Analyze this planning-related image and provide detailed information about:
-
-1. Image type (site photo, architectural drawing, plan, elevation, etc.)
-2. Key visible features and characteristics
-3. Planning considerations evident in the image
-4. Scale, dimensions, or measurements visible
-5. Relationship to surrounding context
-6. Any heritage, environmental, or design considerations
-7. Quality and condition of existing structures
-8. Access arrangements and transport features
-9. Landscape and boundary treatments
-10. Any potential planning issues or benefits
-
-Provide a comprehensive but concise analysis suitable for planning assessment.
-`;
-
-        const imagePart = {
-          inlineData: {
-            data: image.data,
-            mimeType: image.mimeType
-          }
-        };
-
+        const prompt = `\nAnalyze this planning-related image and provide detailed information about:\n1. Image type (site photo, architectural drawing, plan, elevation, etc.)\n2. Key visible features and characteristics\n3. Planning considerations evident in the image\n4. Scale, dimensions, or measurements visible\n5. Relationship to surrounding context\n6. Any heritage, environmental, or design considerations\n7. Quality and condition of existing structures\n8. Access arrangements and transport features\n9. Landscape and boundary treatments\n10. Any potential planning issues or benefits\n`;
+        const imagePart = { inlineData: { data: image.data, mimeType: image.mimeType } };
         const result = await this.visionModel.generateContent([prompt, imagePart]);
         const response = await result.response;
-        const analysis = response.text();
-
-        results.push({
-          imageIndex: i,
-          type: image.type || 'unknown',
-          analysis: analysis,
-          confidence: 0.8
-        });
-
-      } catch (error) {
-        console.error(`Image analysis failed for image ${i}:`, error);
-        results.push({
-          imageIndex: i,
-          error: error.message,
-          confidence: 0
-        });
-      }
+        results.push({ imageIndex: i, type: image.type || 'unknown', analysis: response.text(), confidence: 0.8 });
+      } catch (error) { console.error(`Image analysis failed for image ${i}:`, error); results.push({ imageIndex: i, error: error.message, confidence: 0 }); }
     }
-
     return results;
   }
 
   async performContextualAnalysis(documentResults, spatialResults) {
-    const prompt = `
-Perform a comprehensive contextual analysis for this planning application:
-
-SPATIAL CONTEXT:
-${JSON.stringify(spatialResults, null, 2)}
-
-DOCUMENT EXTRACTED DATA:
-${JSON.stringify(documentResults.extractedData, null, 2)}
-
-Based on this information, provide:
-
-1. SITE CHARACTERISTICS ASSESSMENT
-   - Location quality and context
-   - Accessibility and transport links
-   - Environmental setting and constraints
-   - Heritage and conservation context
-
-2. DEVELOPMENT ANALYSIS
-   - Scale and character assessment
-   - Appropriateness for location
-   - Design quality considerations
-   - Technical compliance factors
-
-3. CONSTRAINT ANALYSIS
-   - Severity and implications of identified constraints
-   - Mitigation requirements
-   - Policy compliance requirements
-   - Risk assessment
-
-4. CONTEXTUAL FIT ASSESSMENT
-   - Relationship to surrounding area
-   - Impact on local character
-   - Cumulative effects consideration
-   - Community integration potential
-
-5. KEY PLANNING ISSUES IDENTIFICATION
-   - Primary concerns and challenges
-   - Significant benefits or opportunities
-   - Critical decision factors
-   - Further information requirements
-
-Provide a structured, professional analysis suitable for planning decision-making.
-`;
-
-    try {
-      const result = await this.visionModel.generateContent(prompt);
-      const response = await result.response;
-      return {
-        analysis: response.text(),
-        confidence: 0.75
-      };
-    } catch (error) {
-      console.error('Contextual analysis failed:', error);
-      return { error: error.message, confidence: 0 };
-    }
+    const prompt = `Perform a comprehensive contextual analysis for this planning application:\n\nSPATIAL CONTEXT:\n${JSON.stringify(spatialResults, null, 2)}\n\nDOCUMENT EXTRACTED DATA:\n${JSON.stringify(documentResults.extractedData, null, 2)}\n\nProvide a structured contextual analysis.`;
+    try { const result = await this.visionModel.generateContent(prompt); const response = await result.response; return { analysis: response.text(), confidence: 0.75 }; } catch (error) { console.error('Contextual analysis failed:', error); return { error: error.message, confidence: 0 }; }
   }
 
   async performPlanningAssessment(documentResults, spatialResults, aiResults) {
-    const prompt = `
-As an expert planning consultant, provide a comprehensive planning assessment:
-
-DEVELOPMENT PROPOSAL:
-${JSON.stringify(documentResults.extractedData, null, 2)}
-
-SPATIAL ANALYSIS:
-${JSON.stringify(spatialResults, null, 2)}
-
-AI ANALYSIS RESULTS:
-Text Analysis: ${JSON.stringify(aiResults.textAnalysis, null, 2)}
-Contextual Analysis: ${aiResults.contextualAnalysis?.analysis || 'Not available'}
-
-Provide a structured planning assessment covering:
-
-1. DEVELOPMENT DESCRIPTION SUMMARY
-2. PLANNING POLICY CONTEXT
-3. MATERIAL CONSIDERATIONS ASSESSMENT
-   - Land use principles
-   - Design and character
-   - Transport and accessibility
-   - Environmental impact
-   - Heritage considerations
-   - Residential amenity
-   - Infrastructure requirements
-
-4. PLANNING BALANCE
-   - Benefits of the proposal
-   - Identified harms or concerns
-   - Balancing exercise
-   - Compliance with development plan
-
-5. PRELIMINARY RECOMMENDATION
-   - Suggested decision (approve/refuse/defer)
-   - Key reasons for recommendation
-   - Suggested conditions (if applicable)
-   - Further information requirements
-
-6. CONFIDENCE ASSESSMENT
-   - Certainty level of recommendation
-   - Areas requiring additional investigation
-   - Risk factors in decision-making
-
-Provide a professional, structured assessment suitable for planning committee consideration.
-`;
-
-    try {
-      const result = await this.visionModel.generateContent(prompt);
-      const response = await result.response;
-      return {
-        assessment: response.text(),
-        confidence: 0.7
-      };
-    } catch (error) {
-      console.error('Planning assessment failed:', error);
-      return { error: error.message, confidence: 0 };
-    }
-  }
-
-  async assessMaterialConsiderations(documentResults, spatialResults, aiResults, assessmentId) {
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'material_considerations_start',
-      'Assessing material planning considerations'
-    );
-
-    const assessment = await this.materialConsiderations.assessApplication(
-      documentResults.extractedData,
-      spatialResults,
-      documentResults
-    );
-
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'material_considerations_complete',
-      `Material considerations assessed: ${assessment.overallRecommendation?.decision || 'unknown'}`
-    );
-
-    return assessment;
-  }
-
-  async compileEvidence(documentResults, spatialResults, aiResults, materialResults, assessmentId) {
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'evidence_compilation_start',
-      'Compiling comprehensive evidence base'
-    );
-
-    const evidence = await this.evidenceEngine.generateEvidence(
-      assessmentId,
-      documentResults,
-      spatialResults,
-      aiResults
-    );
-
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'evidence_compilation_complete',
-      `Evidence compiled: ${evidence.citations.size} citations generated`
-    );
-
-    return evidence;
-  }
-
-  async synthesizeRecommendation(assessment, assessmentId) {
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'decision_synthesis_start',
-      'Synthesizing final recommendation'
-    );
-
-    const materialRecommendation = assessment.results.material?.overallRecommendation;
-    const aiAssessment = assessment.results.ai?.planningAssessment;
-    const evidenceQuality = assessment.results.evidence;
-
-    // Calculate confidence scores
-    const materialConfidence = materialRecommendation?.confidence || 0.5;
-    const aiConfidence = assessment.results.ai?.confidence || 0.5;
-    const evidenceConfidence = this.calculateEvidenceConfidence(evidenceQuality);
-
-    // Weighted average confidence
-    const overallConfidence = (materialConfidence * 0.4 + aiConfidence * 0.3 + evidenceConfidence * 0.3);
-
-    // Determine recommendation
-    let decision = 'defer';
-    let reasoning = 'Insufficient information for clear recommendation';
-
-    if (materialRecommendation?.decision) {
-      decision = materialRecommendation.decision;
-      reasoning = materialRecommendation.reasoning;
-    }
-
-    // Risk factors
-    const riskFactors = this.identifyRiskFactors(assessment);
-
-    const recommendation = {
-      decision: decision,
-      reasoning: reasoning,
-      confidence: overallConfidence,
-      riskFactors: riskFactors,
-      keyConsiderations: this.extractKeyConsiderations(assessment),
-      conditions: this.suggestConditions(assessment),
-      informationRequirements: this.identifyInformationRequirements(assessment),
-      appealRisk: this.assessAppealRisk(assessment),
-      synthesis: {
-        materialBalance: materialRecommendation,
-        aiInsights: aiAssessment,
-        evidenceQuality: evidenceConfidence,
-        overallConfidence: overallConfidence
-      }
-    };
-
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'decision_synthesis_complete',
-      `Recommendation: ${decision} (${(overallConfidence * 100).toFixed(0)}% confidence)`
-    );
-
-    return recommendation;
-  }
-
-  async generateReport(assessment, assessmentId) {
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'report_generation_start',
-      'Generating comprehensive assessment report'
-    );
-
-    const report = {
-      executive: this.generateExecutiveSummary(assessment),
-      siteAnalysis: this.generateSiteAnalysisSection(assessment),
-      proposalAnalysis: this.generateProposalAnalysisSection(assessment),
-      constraintsAssessment: this.generateConstraintsSection(assessment),
-      materialConsiderations: this.generateMaterialConsiderationsSection(assessment),
-      planningBalance: this.generatePlanningBalanceSection(assessment),
-      recommendation: this.generateRecommendationSection(assessment),
-      conditions: this.generateConditionsSection(assessment),
-      evidence: this.generateEvidenceSection(assessment),
-      appendices: this.generateAppendicesSection(assessment)
-    };
-
-    this.addTimelineEvent(
-      this.activeAssessments.get(assessmentId),
-      'report_generation_complete',
-      'Comprehensive report generated'
-    );
-
-    return report;
+    const prompt = `DEVELOPMENT PROPOSAL:\n${JSON.stringify(documentResults.extractedData, null, 2)}\n\nSPATIAL ANALYSIS:\n${JSON.stringify(spatialResults, null, 2)}\n\nAI ANALYSIS RESULTS:\nText Analysis: ${JSON.stringify(aiResults.textAnalysis, null, 2)}\nContextual Analysis: ${aiResults.contextualAnalysis?.analysis || 'Not available'}\n\nProvide a structured professional planning assessment.`;
+    try { const result = await this.visionModel.generateContent(prompt); const response = await result.response; return { assessment: response.text(), confidence: 0.7 }; } catch (error) { console.error('Planning assessment failed:', error); return { error: error.message, confidence: 0 }; }
   }
 
   // Legacy run method for backwards compatibility
@@ -925,7 +462,7 @@ Provide a professional, structured assessment suitable for planning committee co
     const reader = new FileReader();
     reader.onload = async (event) => {
       const dataBuffer = event.target.result;
-      const parseResult = await this.parser.parse({ data: dataBuffer, name: file.name });
+  const parseResult = await this.parser.parse(dataBuffer);
       
       if (parseResult.chunks) {
         for (const chunk of parseResult.chunks) {
@@ -1198,12 +735,46 @@ Provide a professional, structured assessment suitable for planning committee co
 
   generatePlanningBalanceSection(assessment) {
     const material = assessment.results.material;
-    
+    const exercise = material?.balancingExercise || {};
+    // Normalize considerations into qualitative categories expected by UI (if present)
+    const qualitative = [];
+    if (exercise?.significantBenefits) {
+      for (const b of exercise.significantBenefits) {
+        qualitative.push({
+          name: b.name || b.title || b.type || 'Benefit',
+          direction: 'positive',
+            // Map a rough numeric score if provided else derive from weighting phrase heuristics
+          score: typeof b.score === 'number' ? b.score : (
+            /very substantial|considerable/i.test(b.weighting||'') ? 0.8 :
+            /moderate/i.test(b.weighting||'') ? 0.5 :
+            /limited|some/i.test(b.weighting||'') ? 0.15 : 0.3
+          ),
+          phrase: b.weighting || b.phrase || null,
+          details: b.reason || b.details || b.description || ''
+        });
+      }
+    }
+    if (exercise?.significantHarms) {
+      for (const h of exercise.significantHarms) {
+        qualitative.push({
+          name: h.name || h.title || h.type || 'Harm',
+          direction: 'negative',
+          score: typeof h.score === 'number' ? h.score : -(
+            /substantial/i.test(h.weighting||'') ? 0.85 :
+            /significant|considerable/i.test(h.weighting||'') ? 0.5 :
+            /limited|some/i.test(h.weighting||'') ? 0.15 : 0.3
+          ),
+          phrase: h.weighting || h.phrase || null,
+          details: h.reason || h.details || h.description || ''
+        });
+      }
+    }
     return {
-      balancingExercise: material?.balancingExercise || {},
-      benefits: material?.balancingExercise?.significantBenefits || [],
-      harms: material?.balancingExercise?.significantHarms || [],
-      overallBalance: material?.balancingExercise?.overallBalance || 'unknown'
+      balancingExercise: exercise,
+      benefits: exercise.significantBenefits || [],
+      harms: exercise.significantHarms || [],
+      overallBalance: exercise.overallBalance || 'unknown',
+      qualitative // UI binds to this if available
     };
   }
 
