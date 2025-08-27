@@ -15,35 +15,461 @@ export default class SpatialAnalyzer {
   }
 
   async initializeConstraintLayers() {
-    // Initialize with standard UK planning constraint layers
-    const standardLayers = {
-      conservationAreas: { type: 'polygon', source: 'local_authority', priority: 'high' },
-      listedBuildings: { type: 'point', source: 'historic_england', priority: 'high' },
-      floodZones: { type: 'polygon', source: 'environment_agency', priority: 'high' },
-      greenBelt: { type: 'polygon', source: 'local_authority', priority: 'high' },
-      treePreservationOrders: { type: 'polygon', source: 'local_authority', priority: 'medium' },
-      scheduledMonuments: { type: 'polygon', source: 'historic_england', priority: 'high' },
-      localWildlifeSites: { type: 'polygon', source: 'local_authority', priority: 'medium' },
-      airQualityManagementAreas: { type: 'polygon', source: 'local_authority', priority: 'medium' },
-      noiseContours: { type: 'polygon', source: 'various', priority: 'low' },
-      railwayStations: { type: 'point', source: 'transport_data', priority: 'medium' },
-      busStops: { type: 'point', source: 'transport_data', priority: 'low' },
-      schools: { type: 'point', source: 'education_data', priority: 'medium' },
-      hospitals: { type: 'point', source: 'health_data', priority: 'medium' },
-      townCentres: { type: 'polygon', source: 'local_authority', priority: 'medium' },
-      employmentAreas: { type: 'polygon', source: 'local_authority', priority: 'medium' }
+    // Initialize with planning.data.gov.uk datasets
+    const planningDataLayers = {
+      // Heritage constraints (high priority)
+      'conservation-area': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'conservation-area',
+        description: 'Special architectural or historic interest'
+      },
+      'listed-building': { 
+        type: 'point', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'listed-building',
+        description: 'Buildings of special architectural or historic interest'
+      },
+      'listed-building-outline': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'listed-building-outline',
+        description: 'Boundary of listed buildings'
+      },
+      'scheduled-monument': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'scheduled-monument',
+        description: 'Historic sites of national importance'
+      },
+      'park-and-garden': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'park-and-garden',
+        description: 'Historic parks and gardens'
+      },
+      'world-heritage-site': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'world-heritage-site',
+        description: 'UNESCO World Heritage Sites'
+      },
+      'world-heritage-site-buffer-zone': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'world-heritage-site-buffer-zone',
+        description: 'Buffer zones around World Heritage Sites'
+      },
+      'battlefield': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'battlefield',
+        description: 'Historic battlefields'
+      },
+      'heritage-at-risk': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'heritage-at-risk',
+        description: 'Heritage assets at risk'
+      },
+      'protected-wreck-site': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'protected-wreck-site',
+        description: 'Protected wreck sites'
+      },
+      'locally-listed-building': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'locally-listed-building',
+        description: 'Locally listed heritage assets'
+      },
+      'archaeological-priority-area': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'archaeological-priority-area',
+        description: 'Areas of archaeological significance'
+      },
+
+      // Environmental constraints (high priority)
+      'flood-risk-zone': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'flood-risk-zone',
+        description: 'Areas at risk of flooding'
+      },
+      'area-of-outstanding-natural-beauty': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'area-of-outstanding-natural-beauty',
+        description: 'Protected landscapes'
+      },
+      'site-of-special-scientific-interest': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'site-of-special-scientific-interest',
+        description: 'Nationally protected wildlife/geological sites'
+      },
+      'special-area-of-conservation': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'special-area-of-conservation',
+        description: 'EU designated conservation areas'
+      },
+      'special-protection-area': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'special-protection-area',
+        description: 'Bird protection areas'
+      },
+      'ramsar': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'ramsar',
+        description: 'Wetlands of international importance'
+      },
+      'ancient-woodland': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'ancient-woodland',
+        description: 'Ancient woodland areas'
+      },
+      'green-belt': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'green-belt',
+        description: 'Green belt land'
+      },
+      'tree-preservation-zone': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'tree-preservation-zone',
+        description: 'Tree preservation order zones'
+      },
+      'tree': { 
+        type: 'point', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'tree',
+        description: 'Individual protected trees'
+      },
+      'national-nature-reserve': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'national-nature-reserve',
+        description: 'National nature reserves'
+      },
+      'local-nature-reserve': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'local-nature-reserve',
+        description: 'Local nature reserves'
+      },
+      'air-quality-management-area': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'air-quality-management-area',
+        description: 'Air quality management areas'
+      },
+      'agricultural-land-classification': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'low',
+        dataset: 'agricultural-land-classification',
+        description: 'Agricultural land quality'
+      },
+      'flood-storage-area': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'flood-storage-area',
+        description: 'Flood storage areas'
+      },
+      'heritage-coast': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'heritage-coast',
+        description: 'Heritage coast areas'
+      },
+      'nature-improvement-area': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'low',
+        dataset: 'nature-improvement-area',
+        description: 'Nature improvement areas'
+      },
+
+      // Development constraints
+      'article-4-direction-area': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'article-4-direction-area',
+        description: 'Areas with restricted permitted development rights'
+      },
+      'brownfield-land': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'brownfield-land',
+        description: 'Previously developed land'
+      },
+      'brownfield-site': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'brownfield-site',
+        description: 'Brownfield site boundaries'
+      },
+      'central-activities-zone': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'central-activities-zone',
+        description: 'Central London activity zone'
+      },
+      'building-preservation-notice': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'high',
+        dataset: 'building-preservation-notice',
+        description: 'Buildings with preservation notices'
+      },
+      'certificate-of-immunity': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'low',
+        dataset: 'certificate-of-immunity',
+        description: 'Buildings with immunity certificates'
+      },
+
+      // Administrative areas
+      'local-planning-authority': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'low',
+        dataset: 'local-planning-authority',
+        description: 'Local planning authority boundaries'
+      },
+      'local-authority-district': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'low',
+        dataset: 'local-authority-district',
+        description: 'Local authority districts'
+      },
+      'parish': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'low',
+        dataset: 'parish',
+        description: 'Civil parishes'
+      },
+      'ward': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'low',
+        dataset: 'ward',
+        description: 'Electoral wards'
+      },
+      'national-park': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'national-park',
+        description: 'National park boundaries'
+      },
+
+      // Transport and accessibility
+      'transport-access-node': { 
+        type: 'point', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'transport-access-node',
+        description: 'Public transport access points'
+      },
+
+      // Infrastructure and utilities
+      'infrastructure-project': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'infrastructure-project',
+        description: 'Major infrastructure projects'
+      },
+
+      // Additional datasets for comprehensive coverage
+      'educational-establishment': { 
+        type: 'point', 
+        source: 'planning_data_api', 
+        priority: 'medium',
+        dataset: 'educational-establishment',
+        description: 'Schools and educational facilities'
+      },
+      'built-up-area': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'low',
+        dataset: 'built-up-area',
+        description: 'Built-up areas'
+      },
+      'title-boundary': { 
+        type: 'polygon', 
+        source: 'planning_data_api', 
+        priority: 'low',
+        dataset: 'title-boundary',
+        description: 'Land registry boundaries'
+      }
     };
 
-    for (const [name, config] of Object.entries(standardLayers)) {
+    // Datasets that need to be derived from other sources
+    const derivedLayers = {
+      // Derive from transport-access-node with filtering
+      'railway-station': {
+        type: 'point',
+        source: 'derived',
+        priority: 'high',
+        deriveFrom: 'transport-access-node',
+        filter: (feature) => this.isRailwayStation(feature),
+        description: 'Railway stations'
+      },
+      'bus-stop': {
+        type: 'point',
+        source: 'derived',
+        priority: 'low',
+        deriveFrom: 'transport-access-node',
+        filter: (feature) => this.isBusStop(feature),
+        description: 'Bus stops'
+      },
+      
+      // Derive from educational-establishment with filtering
+      'primary-school': {
+        type: 'point',
+        source: 'derived',
+        priority: 'medium',
+        deriveFrom: 'educational-establishment',
+        filter: (feature) => this.isPrimarySchool(feature),
+        description: 'Primary schools'
+      },
+      'secondary-school': {
+        type: 'point',
+        source: 'derived',
+        priority: 'medium',
+        deriveFrom: 'educational-establishment',
+        filter: (feature) => this.isSecondarySchool(feature),
+        description: 'Secondary schools'
+      },
+
+      // Best and most versatile agricultural land - derive from agricultural-land-classification
+      'best-and-most-versatile-agricultural-land': {
+        type: 'polygon',
+        source: 'derived',
+        priority: 'medium',
+        deriveFrom: 'agricultural-land-classification',
+        filter: (feature) => this.isBestAndMostVersatileAgriculturalLand(feature),
+        description: 'Best and most versatile agricultural land (grades 1, 2, 3a)'
+      }
+    };
+
+    // Initialize all layers
+    for (const [name, config] of Object.entries({ ...planningDataLayers, ...derivedLayers })) {
       this.constraintLayers.set(name, {
         ...config,
-        features: [], // Will be populated from APIs/data sources
-        lastUpdated: null
+        features: [],
+        lastUpdated: null,
+        enabled: true // Allow selective enabling/disabling
       });
     }
+
+    // Define dataset categories for intelligent querying
+    this.datasetCategories = {
+      heritage: [
+        'conservation-area', 'listed-building', 'listed-building-outline', 'scheduled-monument',
+        'park-and-garden', 'world-heritage-site', 'world-heritage-site-buffer-zone',
+        'battlefield', 'heritage-at-risk', 'protected-wreck-site', 'locally-listed-building',
+        'archaeological-priority-area'
+      ],
+      environmental: [
+        'flood-risk-zone', 'area-of-outstanding-natural-beauty', 'site-of-special-scientific-interest',
+        'special-area-of-conservation', 'special-protection-area', 'ramsar', 'ancient-woodland',
+        'green-belt', 'tree-preservation-zone', 'tree', 'national-nature-reserve',
+        'local-nature-reserve', 'air-quality-management-area', 'agricultural-land-classification',
+        'flood-storage-area', 'heritage-coast', 'nature-improvement-area',
+        'best-and-most-versatile-agricultural-land'
+      ],
+      development: [
+        'article-4-direction-area', 'brownfield-land', 'brownfield-site', 'central-activities-zone',
+        'building-preservation-notice', 'certificate-of-immunity'
+      ],
+      transport: [
+        'transport-access-node', 'railway-station', 'bus-stop'
+      ],
+      administrative: [
+        'local-planning-authority', 'local-authority-district', 'parish', 'ward', 'national-park'
+      ],
+      infrastructure: [
+        'infrastructure-project', 'educational-establishment', 'primary-school', 'secondary-school'
+      ]
+    };
   }
 
-  async analyzeSite(siteGeometry, siteAddress = null) {
+  // Helper methods for dataset filtering
+  isRailwayStation(feature) {
+    const stopType = feature.properties?.StopType?.toLowerCase() || '';
+    const locality = feature.properties?.LocalityName?.toLowerCase() || '';
+    return stopType.includes('rail') || locality.includes('station') || 
+           feature.properties?.CommonName?.toLowerCase().includes('station');
+  }
+
+  isBusStop(feature) {
+    const stopType = feature.properties?.StopType?.toLowerCase() || '';
+    return stopType.includes('bus') || stopType === 'bcs' || stopType === 'bct';
+  }
+
+  isPrimarySchool(feature) {
+    const phase = feature.properties?.PhaseOfEducation?.toLowerCase() || '';
+    const type = feature.properties?.TypeOfEstablishment?.toLowerCase() || '';
+    return phase.includes('primary') || type.includes('primary');
+  }
+
+  isSecondarySchool(feature) {
+    const phase = feature.properties?.PhaseOfEducation?.toLowerCase() || '';
+    const type = feature.properties?.TypeOfEstablishment?.toLowerCase() || '';
+    return phase.includes('secondary') || type.includes('secondary');
+  }
+
+  isBestAndMostVersatileAgriculturalLand(feature) {
+    const grade = feature.properties?.grade?.toLowerCase() || 
+                  feature.properties?.Grade?.toLowerCase() || '';
+    return ['1', '2', '3a', 'grade 1', 'grade 2', 'grade 3a'].some(g => grade.includes(g));
+  }
+
+  async analyzeSite(siteGeometry, siteAddress = null, analysisOptions = {}) {
     const analysisId = this.generateAnalysisId(siteGeometry);
     
     // Check cache first
@@ -56,6 +482,9 @@ export default class SpatialAnalyzer {
       const siteCenter = turf.centroid(siteGeometry);
       const [longitude, latitude] = siteCenter.geometry.coordinates;
 
+      // Determine which datasets to query based on analysis options
+      const datasetsToQuery = this.selectDatasetsForAnalysis(analysisOptions);
+
       // Parallel analysis of different aspects
       const [
         officialConstraints,
@@ -64,8 +493,8 @@ export default class SpatialAnalyzer {
         streetViewData,
         transportAnalysis
       ] = await Promise.all([
-        this.getOfficialConstraints(latitude, longitude, siteGeometry),
-        this.analyzeProximities(siteCenter),
+        this.getOfficialConstraints(latitude, longitude, siteGeometry, datasetsToQuery),
+        this.analyzeProximities(siteCenter, analysisOptions),
         this.calculateSiteMetrics(siteGeometry),
         this.getStreetViewData(latitude, longitude),
         this.analyzeTransportAccess(latitude, longitude)
@@ -87,8 +516,14 @@ export default class SpatialAnalyzer {
           siteMetrics, 
           transportAnalysis
         ),
+        planningAssessment: this.generatePlanningAssessment(
+          officialConstraints,
+          proximityAnalysis,
+          analysisOptions
+        ),
         timestamp: new Date(),
-        confidence: this.calculateAnalysisConfidence(officialConstraints, proximityAnalysis)
+        confidence: this.calculateAnalysisConfidence(officialConstraints, proximityAnalysis),
+        analysisOptions
       };
 
       // Cache the result
@@ -102,33 +537,242 @@ export default class SpatialAnalyzer {
   }
 
   /**
+   * Select datasets to query based on analysis requirements
+   */
+  selectDatasetsForAnalysis(options = {}) {
+    const {
+      includeHeritage = true,
+      includeEnvironmental = true,
+      includeDevelopment = true,
+      includeTransport = true,
+      includeInfrastructure = true,
+      analysisType = 'comprehensive', // 'basic', 'comprehensive', 'heritage-focused', 'environmental-focused'
+      developmentType = null // 'residential', 'commercial', 'industrial'
+    } = options;
+
+    let selectedDatasets = [];
+
+    // Always include critical datasets
+    const criticalDatasets = [
+      'flood-risk-zone',
+      'conservation-area',
+      'listed-building',
+      'green-belt',
+      'article-4-direction-area'
+    ];
+    selectedDatasets.push(...criticalDatasets);
+
+    // Add datasets based on analysis type
+    switch (analysisType) {
+      case 'basic':
+        selectedDatasets.push(
+          'local-planning-authority',
+          'transport-access-node',
+          'educational-establishment'
+        );
+        break;
+        
+      case 'heritage-focused':
+        selectedDatasets.push(
+          ...this.datasetCategories.heritage,
+          'archaeological-priority-area'
+        );
+        break;
+        
+      case 'environmental-focused':
+        selectedDatasets.push(
+          ...this.datasetCategories.environmental,
+          'best-and-most-versatile-agricultural-land'
+        );
+        break;
+        
+      case 'comprehensive':
+      default:
+        // Include all categories based on options
+        if (includeHeritage) selectedDatasets.push(...this.datasetCategories.heritage);
+        if (includeEnvironmental) selectedDatasets.push(...this.datasetCategories.environmental);
+        if (includeDevelopment) selectedDatasets.push(...this.datasetCategories.development);
+        if (includeTransport) selectedDatasets.push(...this.datasetCategories.transport);
+        if (includeInfrastructure) selectedDatasets.push(...this.datasetCategories.infrastructure);
+        selectedDatasets.push(...this.datasetCategories.administrative);
+        break;
+    }
+
+    // Add development-type specific datasets
+    if (developmentType === 'residential') {
+      selectedDatasets.push(
+        'educational-establishment',
+        'local-nature-reserve',
+        'transport-access-node'
+      );
+    } else if (developmentType === 'commercial') {
+      selectedDatasets.push(
+        'central-activities-zone',
+        'transport-access-node',
+        'employment-area'
+      );
+    } else if (developmentType === 'industrial') {
+      selectedDatasets.push(
+        'air-quality-management-area',
+        'flood-storage-area',
+        'transport-access-node'
+      );
+    }
+
+    // Remove duplicates and return
+    return [...new Set(selectedDatasets)];
+  }
+
+  /**
+   * Generate planning assessment based on analysis results
+   */
+  generatePlanningAssessment(constraints, proximities, options = {}) {
+    const assessment = {
+      developmentPotential: 'unknown',
+      keyOpportunities: [],
+      keyConstraints: [],
+      planningStrategy: [],
+      riskLevel: 'low',
+      recommendedStudies: [],
+      designConsiderations: []
+    };
+
+    // Assess development potential
+    const criticalConstraints = constraints.critical?.length || 0;
+    const highPriorityConstraints = constraints.constraints?.filter(c => 
+      c.priority === 'high' && c.coverage > 10
+    ).length || 0;
+
+    if (criticalConstraints === 0 && highPriorityConstraints <= 1) {
+      assessment.developmentPotential = 'high';
+      assessment.riskLevel = 'low';
+    } else if (criticalConstraints <= 1 && highPriorityConstraints <= 3) {
+      assessment.developmentPotential = 'medium';
+      assessment.riskLevel = 'medium';
+    } else {
+      assessment.developmentPotential = 'challenging';
+      assessment.riskLevel = 'high';
+    }
+
+    // Identify key opportunities
+    if (proximities.transport_accessibility?.ptal_score >= 4) {
+      assessment.keyOpportunities.push('Excellent public transport accessibility');
+    }
+    if (proximities.education_accessibility?.rating === 'excellent') {
+      assessment.keyOpportunities.push('Strong education accessibility for family housing');
+    }
+    if (constraints.byCategory?.development?.some(c => c.dataset === 'brownfield-land')) {
+      assessment.keyOpportunities.push('Brownfield development opportunity');
+    }
+
+    // Identify key constraints
+    constraints.critical?.forEach(constraint => {
+      assessment.keyConstraints.push({
+        type: constraint.dataset,
+        description: constraint.description,
+        coverage: constraint.coverage,
+        impact: constraint.impactLevel
+      });
+    });
+
+    // Planning strategy recommendations
+    if (proximities.heritage_context?.context === 'high') {
+      assessment.planningStrategy.push('Heritage-led design approach required');
+      assessment.recommendedStudies.push('Heritage Impact Assessment');
+    }
+    if (proximities.environmental_context?.ecological_assessment_likely) {
+      assessment.planningStrategy.push('Ecological mitigation strategy needed');
+      assessment.recommendedStudies.push('Ecological Assessment');
+    }
+    if (constraints.intersecting?.some(c => c.dataset === 'flood-risk-zone')) {
+      assessment.planningStrategy.push('Flood risk mitigation required');
+      assessment.recommendedStudies.push('Flood Risk Assessment');
+    }
+
+    // Design considerations
+    if (proximities.heritage_context?.context !== 'low') {
+      assessment.designConsiderations.push('Respect historic character and setting');
+    }
+    if (proximities.transport_accessibility?.ptal_score >= 4) {
+      assessment.designConsiderations.push('Reduced parking provision acceptable');
+    }
+    if (constraints.intersecting?.some(c => c.dataset === 'conservation-area')) {
+      assessment.designConsiderations.push('High quality materials and detailing essential');
+    }
+
+    return assessment;
+  }
+
+  /**
    * Get official planning constraints from planning.data.gov.uk
    */
   async getOfficialConstraints(latitude, longitude, siteGeometry) {
     try {
-      const constraints = await this.planningDataAPI.getConstraintsForSite(latitude, longitude);
+      // Get all available datasets for the location
+      const allConstraints = await this.planningDataAPI.getConstraintsForSite(latitude, longitude);
       
+      // Group constraints by priority and category
+      const constraintsByCategory = {
+        heritage: [],
+        environmental: [],
+        development: [],
+        transport: [],
+        administrative: [],
+        infrastructure: []
+      };
+
       // Enhanced processing with spatial intersection analysis
-      const processedConstraints = constraints.map(constraint => {
+      const processedConstraints = [];
+      
+      for (const constraint of allConstraints) {
         const intersection = this.calculateIntersection(siteGeometry, constraint.geometry);
         const coverage = intersection ? this.calculateCoverage(siteGeometry, intersection) : 0;
         
-        return {
+        // Determine constraint category
+        const category = this.determineConstraintCategory(constraint.dataset);
+        
+        const processedConstraint = {
           ...constraint,
           intersection,
           coverage,
+          category,
           impactLevel: this.assessConstraintImpact(constraint, coverage),
-          planningImplications: this.deriveConstraintImplications(constraint, coverage)
+          planningImplications: this.deriveConstraintImplications(constraint, coverage),
+          priority: this.getConstraintPriority(constraint.dataset),
+          description: this.getConstraintDescription(constraint.dataset)
         };
+
+        processedConstraints.push(processedConstraint);
+        
+        // Add to category groups
+        if (constraintsByCategory[category]) {
+          constraintsByCategory[category].push(processedConstraint);
+        }
+      }
+
+      // Get derived datasets
+      const derivedConstraints = await this.getDerivedConstraints(latitude, longitude, siteGeometry);
+      processedConstraints.push(...derivedConstraints);
+
+      // Sort by priority and coverage
+      processedConstraints.sort((a, b) => {
+        const priorityOrder = { 'high': 3, 'medium': 2, 'low': 1 };
+        if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+          return priorityOrder[b.priority] - priorityOrder[a.priority];
+        }
+        return b.coverage - a.coverage;
       });
 
       return {
         total: processedConstraints.length,
         bySeverity: this.groupBySeverity(processedConstraints),
-        byCategory: this.groupByCategory(processedConstraints),
+        byCategory: constraintsByCategory,
+        byPriority: this.groupByPriority(processedConstraints),
         intersecting: processedConstraints.filter(c => c.coverage > 0),
         nearby: processedConstraints.filter(c => c.coverage === 0 && c.distance < 500),
-        constraints: processedConstraints
+        critical: processedConstraints.filter(c => c.priority === 'high' && c.coverage > 0),
+        constraints: processedConstraints,
+        summary: this.generateConstraintSummary(processedConstraints, constraintsByCategory)
       };
     } catch (error) {
       console.error('Failed to get official constraints:', error);
@@ -137,57 +781,548 @@ export default class SpatialAnalyzer {
   }
 
   /**
-   * Analyze proximities to key features
+   * Get constraints from derived datasets
+   */
+  async getDerivedConstraints(latitude, longitude, siteGeometry) {
+    const derivedConstraints = [];
+    
+    try {
+      // Get transport access nodes and filter for specific types
+      const transportNodes = await this.planningDataAPI.searchByLocation(
+        latitude, longitude, ['transport-access-node'], 50
+      );
+
+      // Derive railway stations
+      const railwayStations = transportNodes.filter(node => this.isRailwayStation(node));
+      for (const station of railwayStations) {
+        const distance = this.calculateDistanceToFeature(
+          turf.centroid(siteGeometry), station
+        );
+        derivedConstraints.push({
+          dataset: 'railway-station',
+          category: 'transport',
+          priority: 'high',
+          coverage: 0,
+          distance,
+          name: station.properties?.CommonName || 'Railway Station',
+          description: 'Railway station access point',
+          planningImplications: [`Public transport accessibility: ${this.getAccessibilityRating(distance)}`]
+        });
+      }
+
+      // Derive bus stops
+      const busStops = transportNodes.filter(node => this.isBusStop(node));
+      for (const stop of busStops.slice(0, 10)) { // Limit to 10 closest
+        const distance = this.calculateDistanceToFeature(
+          turf.centroid(siteGeometry), stop
+        );
+        derivedConstraints.push({
+          dataset: 'bus-stop',
+          category: 'transport',
+          priority: 'low',
+          coverage: 0,
+          distance,
+          name: stop.properties?.CommonName || 'Bus Stop',
+          description: 'Bus stop access point',
+          planningImplications: [`Local bus accessibility within ${Math.round(distance)}m`]
+        });
+      }
+
+      // Get educational establishments and filter
+      const schools = await this.planningDataAPI.searchByLocation(
+        latitude, longitude, ['educational-establishment'], 20
+      );
+
+      const primarySchools = schools.filter(school => this.isPrimarySchool(school));
+      for (const school of primarySchools.slice(0, 5)) {
+        const distance = this.calculateDistanceToFeature(
+          turf.centroid(siteGeometry), school
+        );
+        derivedConstraints.push({
+          dataset: 'primary-school',
+          category: 'infrastructure',
+          priority: 'medium',
+          coverage: 0,
+          distance,
+          name: school.properties?.EstablishmentName || 'Primary School',
+          description: 'Primary school facility',
+          planningImplications: [`School accessibility: ${distance < 800 ? 'Excellent' : distance < 1200 ? 'Good' : 'Moderate'}`]
+        });
+      }
+
+      // Get agricultural land and filter for best and most versatile
+      const agriculturalLand = await this.planningDataAPI.getConstraintsForSite(latitude, longitude, ['agricultural-land-classification']);
+      for (const land of agriculturalLand) {
+        if (this.isBestAndMostVersatileAgriculturalLand(land)) {
+          const intersection = this.calculateIntersection(siteGeometry, land.geometry);
+          const coverage = intersection ? this.calculateCoverage(siteGeometry, intersection) : 0;
+          
+          if (coverage > 0) {
+            derivedConstraints.push({
+              dataset: 'best-and-most-versatile-agricultural-land',
+              category: 'environmental',
+              priority: 'medium',
+              coverage,
+              intersection,
+              name: 'Best and Most Versatile Agricultural Land',
+              description: 'High quality agricultural land (grades 1, 2, 3a)',
+              planningImplications: ['Agricultural land assessment required', 'Soil management plan may be needed']
+            });
+          }
+        }
+      }
+
+    } catch (error) {
+      console.warn('Error getting derived constraints:', error);
+    }
+
+    return derivedConstraints;
+  }
+
+  /**
+   * Determine the category of a constraint based on its dataset
+   */
+  determineConstraintCategory(dataset) {
+    for (const [category, datasets] of Object.entries(this.datasetCategories)) {
+      if (datasets.includes(dataset)) {
+        return category;
+      }
+    }
+    return 'other';
+  }
+
+  /**
+   * Get the priority level for a dataset
+   */
+  getConstraintPriority(dataset) {
+    const layer = this.constraintLayers.get(dataset);
+    return layer?.priority || 'low';
+  }
+
+  /**
+   * Get the description for a dataset
+   */
+  getConstraintDescription(dataset) {
+    const layer = this.constraintLayers.get(dataset);
+    return layer?.description || dataset;
+  }
+
+  /**
+   * Group constraints by priority
+   */
+  groupByPriority(constraints) {
+    return constraints.reduce((groups, constraint) => {
+      const priority = constraint.priority;
+      if (!groups[priority]) groups[priority] = [];
+      groups[priority].push(constraint);
+      return groups;
+    }, {});
+  }
+
+  /**
+   * Generate a summary of constraints
+   */
+  generateConstraintSummary(constraints, constraintsByCategory) {
+    const summary = {
+      totalConstraints: constraints.length,
+      intersectingConstraints: constraints.filter(c => c.coverage > 0).length,
+      highPriorityConstraints: constraints.filter(c => c.priority === 'high').length,
+      categoryBreakdown: {},
+      keyConstraints: [],
+      planningComplexity: 'low'
+    };
+
+    // Calculate category breakdown
+    for (const [category, categoryConstraints] of Object.entries(constraintsByCategory)) {
+      summary.categoryBreakdown[category] = {
+        total: categoryConstraints.length,
+        intersecting: categoryConstraints.filter(c => c.coverage > 0).length,
+        highPriority: categoryConstraints.filter(c => c.priority === 'high').length
+      };
+    }
+
+    // Identify key constraints (high priority with coverage > 10%)
+    summary.keyConstraints = constraints
+      .filter(c => c.priority === 'high' && c.coverage > 10)
+      .map(c => ({
+        dataset: c.dataset,
+        name: c.name,
+        coverage: c.coverage,
+        impact: c.impactLevel
+      }));
+
+    // Assess planning complexity
+    const highPriorityIntersecting = constraints.filter(c => 
+      c.priority === 'high' && c.coverage > 0
+    ).length;
+    
+    if (highPriorityIntersecting >= 3) {
+      summary.planningComplexity = 'high';
+    } else if (highPriorityIntersecting >= 1 || summary.intersectingConstraints >= 5) {
+      summary.planningComplexity = 'medium';
+    }
+
+    return summary;
+  }
+
+  /**
+   * Get accessibility rating based on distance
+   */
+  getAccessibilityRating(distance) {
+    if (distance <= 400) return 'Excellent';
+    if (distance <= 800) return 'Very Good';
+    if (distance <= 1200) return 'Good';
+    if (distance <= 2000) return 'Moderate';
+    return 'Poor';
+  }
+
+  /**
+   * Analyze proximities to key features using planning data API datasets
    */
   async analyzeProximities(siteCenter) {
     const proximityTargets = [
-      { type: 'railway-station', radius: 2000, weight: 'high' },
-      { type: 'town-centre', radius: 5000, weight: 'high' },
-      { type: 'primary-school', radius: 1000, weight: 'medium' },
-      { type: 'hospital', radius: 10000, weight: 'medium' },
-      { type: 'employment-area', radius: 5000, weight: 'medium' }
+      // Transport (critical for PTAL calculation)
+      { 
+        dataset: 'transport-access-node', 
+        filter: this.isRailwayStation.bind(this),
+        type: 'railway-station', 
+        radius: 2000, 
+        weight: 'high',
+        description: 'Railway stations'
+      },
+      { 
+        dataset: 'transport-access-node', 
+        filter: this.isBusStop.bind(this),
+        type: 'bus-stop', 
+        radius: 800, 
+        weight: 'medium',
+        description: 'Bus stops'
+      },
+      
+      // Education facilities
+      { 
+        dataset: 'educational-establishment', 
+        filter: this.isPrimarySchool.bind(this),
+        type: 'primary-school', 
+        radius: 1200, 
+        weight: 'high',
+        description: 'Primary schools'
+      },
+      { 
+        dataset: 'educational-establishment', 
+        filter: this.isSecondarySchool.bind(this),
+        type: 'secondary-school', 
+        radius: 3000, 
+        weight: 'medium',
+        description: 'Secondary schools'
+      },
+      
+      // Heritage and conservation features
+      { 
+        dataset: 'listed-building', 
+        type: 'listed-building', 
+        radius: 500, 
+        weight: 'medium',
+        description: 'Listed buildings'
+      },
+      { 
+        dataset: 'conservation-area', 
+        type: 'conservation-area', 
+        radius: 1000, 
+        weight: 'medium',
+        description: 'Conservation areas'
+      },
+      { 
+        dataset: 'scheduled-monument', 
+        type: 'scheduled-monument', 
+        radius: 1000, 
+        weight: 'medium',
+        description: 'Scheduled monuments'
+      },
+      
+      // Environmental features
+      { 
+        dataset: 'ancient-woodland', 
+        type: 'ancient-woodland', 
+        radius: 500, 
+        weight: 'medium',
+        description: 'Ancient woodland'
+      },
+      { 
+        dataset: 'local-nature-reserve', 
+        type: 'local-nature-reserve', 
+        radius: 2000, 
+        weight: 'low',
+        description: 'Local nature reserves'
+      },
+      
+      // Development opportunities
+      { 
+        dataset: 'brownfield-land', 
+        type: 'brownfield-land', 
+        radius: 1000, 
+        weight: 'low',
+        description: 'Brownfield land'
+      }
     ];
 
     const proximities = [];
 
     for (const target of proximityTargets) {
       try {
-        const nearbyFeatures = await this.planningDataAPI.searchByLocation(
+        let nearbyFeatures = await this.planningDataAPI.searchByLocation(
           siteCenter.geometry.coordinates[1], // lat
           siteCenter.geometry.coordinates[0], // lng
-          [target.type],
-          20
+          [target.dataset],
+          target.type === 'bus-stop' ? 50 : 30 // More bus stops needed for PTAL
         );
+
+        // Apply filtering if specified
+        if (target.filter) {
+          nearbyFeatures = nearbyFeatures.filter(target.filter);
+        }
 
         const processed = nearbyFeatures.map(feature => {
           const distance = this.calculateDistanceToFeature(siteCenter, feature);
           return {
             type: target.type,
-            name: feature.name || feature.reference,
+            dataset: target.dataset,
+            name: this.getFeatureName(feature, target.dataset),
             distance,
             within_radius: distance <= target.radius,
             weight: target.weight,
-            accessibility_score: this.calculateAccessibilityScore(distance, target.radius)
+            accessibility_score: this.calculateAccessibilityScore(distance, target.radius),
+            properties: this.extractRelevantProperties(feature, target.dataset)
           };
         }).filter(p => p.distance <= target.radius)
           .sort((a, b) => a.distance - b.distance);
 
         proximities.push({
           target_type: target.type,
+          dataset: target.dataset,
+          description: target.description,
           radius: target.radius,
+          weight: target.weight,
           found: processed.length,
-          features: processed.slice(0, 5), // Top 5 closest
-          accessibility_summary: this.summarizeAccessibility(processed, target)
+          features: processed.slice(0, target.type === 'bus-stop' ? 15 : 8), // More bus stops for PTAL
+          accessibility_summary: this.summarizeAccessibility(processed, target),
+          planning_relevance: this.assessPlanningRelevance(target.type, processed)
         });
       } catch (error) {
         console.warn(`Failed to analyze proximity to ${target.type}:`, error);
+        proximities.push({
+          target_type: target.type,
+          dataset: target.dataset,
+          description: target.description,
+          error: error.message,
+          found: 0,
+          features: []
+        });
       }
     }
 
     return {
       summary: this.summarizeProximityAnalysis(proximities),
       details: proximities,
-      transport_accessibility: this.calculateTransportAccessibility(proximities)
+      transport_accessibility: this.calculateTransportAccessibility(proximities),
+      heritage_context: this.calculateHeritageContext(proximities),
+      environmental_context: this.calculateEnvironmentalContext(proximities),
+      education_accessibility: this.calculateEducationAccessibility(proximities)
+    };
+  }
+
+  /**
+   * Extract relevant properties from features based on dataset
+   */
+  extractRelevantProperties(feature, dataset) {
+    const props = feature.properties || {};
+    
+    switch (dataset) {
+      case 'transport-access-node':
+        return {
+          stopType: props.StopType,
+          commonName: props.CommonName,
+          localityName: props.LocalityName,
+          stopPoint: props.StopPoint
+        };
+      case 'educational-establishment':
+        return {
+          establishmentName: props.EstablishmentName,
+          phaseOfEducation: props.PhaseOfEducation,
+          typeOfEstablishment: props.TypeOfEstablishment,
+          establishmentStatus: props.EstablishmentStatus
+        };
+      case 'listed-building':
+        return {
+          name: props.name,
+          grade: props.grade,
+          listEntry: props['list-entry'],
+          listedBuildingGrade: props['listed-building-grade']
+        };
+      case 'conservation-area':
+        return {
+          name: props.name,
+          documentation: props.documentation,
+          notes: props.notes
+        };
+      default:
+        return {
+          name: props.name,
+          reference: props.reference,
+          notes: props.notes
+        };
+    }
+  }
+
+  /**
+   * Get appropriate name for a feature based on dataset
+   */
+  getFeatureName(feature, dataset) {
+    const props = feature.properties || {};
+    
+    switch (dataset) {
+      case 'transport-access-node':
+        return props.CommonName || props.LocalityName || 'Transport Access Point';
+      case 'educational-establishment':
+        return props.EstablishmentName || 'Educational Establishment';
+      case 'listed-building':
+        return props.name || `Listed Building (${props.grade || 'Unknown Grade'})`;
+      case 'conservation-area':
+        return props.name || 'Conservation Area';
+      default:
+        return props.name || props.reference || feature.dataset || 'Unnamed Feature';
+    }
+  }
+
+  /**
+   * Assess planning relevance of proximity features
+   */
+  assessPlanningRelevance(featureType, features) {
+    if (features.length === 0) return { relevance: 'none', notes: [] };
+    
+    const closest = features[0];
+    const notes = [];
+    
+    switch (featureType) {
+      case 'railway-station':
+        if (closest.distance <= 800) {
+          notes.push('Excellent public transport accessibility');
+          notes.push('Reduced car parking requirements likely');
+          notes.push('High PTAL score expected');
+          return { relevance: 'high', notes };
+        } else if (closest.distance <= 1200) {
+          notes.push('Good public transport accessibility');
+          notes.push('Moderate PTAL score expected');
+          return { relevance: 'medium', notes };
+        }
+        break;
+        
+      case 'primary-school':
+        if (closest.distance <= 800) {
+          notes.push('Excellent school accessibility for families');
+          notes.push('Family housing development strongly supported');
+          return { relevance: 'high', notes };
+        }
+        break;
+        
+      case 'listed-building':
+        if (closest.distance <= 100) {
+          notes.push('Heritage impact assessment required');
+          notes.push('Design must respect historic context');
+          notes.push('Height restrictions likely');
+          return { relevance: 'high', notes };
+        } else if (closest.distance <= 300) {
+          notes.push('Heritage considerations in design');
+          return { relevance: 'medium', notes };
+        }
+        break;
+        
+      case 'conservation-area':
+        if (closest.distance <= 50) {
+          notes.push('Development within/adjacent to conservation area');
+          notes.push('Conservation area assessment required');
+          notes.push('Strict design controls apply');
+          return { relevance: 'high', notes };
+        }
+        break;
+        
+      case 'ancient-woodland':
+        if (closest.distance <= 100) {
+          notes.push('Ancient woodland buffer zone considerations');
+          notes.push('Ecological assessment required');
+          notes.push('Root protection area restrictions');
+          return { relevance: 'high', notes };
+        }
+        break;
+    }
+    
+    return { relevance: 'low', notes };
+  }
+
+  /**
+   * Calculate heritage context
+   */
+  calculateHeritageContext(proximities) {
+    const heritageFeatures = proximities.filter(p => 
+      ['listed-building', 'conservation-area', 'scheduled-monument'].includes(p.target_type)
+    );
+    
+    const nearbyHeritage = heritageFeatures.filter(p => p.found > 0);
+    const density = nearbyHeritage.length;
+    
+    let context = 'low';
+    if (density >= 3) context = 'high';
+    else if (density >= 2) context = 'medium';
+    
+    return {
+      context,
+      heritage_features: nearbyHeritage.length,
+      closest_heritage: nearbyHeritage.length > 0 ? 
+        Math.min(...nearbyHeritage.flatMap(p => p.features.map(f => f.distance))) : null,
+      assessment_required: context !== 'low'
+    };
+  }
+
+  /**
+   * Calculate environmental context
+   */
+  calculateEnvironmentalContext(proximities) {
+    const environmentalFeatures = proximities.filter(p => 
+      ['ancient-woodland', 'local-nature-reserve'].includes(p.target_type)
+    );
+    
+    const nearbyEnvironmental = environmentalFeatures.filter(p => p.found > 0);
+    
+    return {
+      environmental_features: nearbyEnvironmental.length,
+      closest_environmental: nearbyEnvironmental.length > 0 ? 
+        Math.min(...nearbyEnvironmental.flatMap(p => p.features.map(f => f.distance))) : null,
+      ecological_assessment_likely: nearbyEnvironmental.some(p => 
+        p.features.some(f => f.distance <= 200)
+      )
+    };
+  }
+
+  /**
+   * Calculate education accessibility
+   */
+  calculateEducationAccessibility(proximities) {
+    const primarySchools = proximities.find(p => p.target_type === 'primary-school');
+    const secondarySchools = proximities.find(p => p.target_type === 'secondary-school');
+    
+    const primaryDistance = primarySchools?.features?.[0]?.distance || null;
+    const secondaryDistance = secondarySchools?.features?.[0]?.distance || null;
+    
+    let rating = 'poor';
+    if (primaryDistance && primaryDistance <= 800) rating = 'excellent';
+    else if (primaryDistance && primaryDistance <= 1200) rating = 'good';
+    else if (primaryDistance && primaryDistance <= 2000) rating = 'moderate';
+    
+    return {
+      rating,
+      primary_school_distance: primaryDistance,
+      secondary_school_distance: secondaryDistance,
+      family_housing_suitability: rating === 'excellent' || rating === 'good'
     };
   }
 
@@ -593,6 +1728,243 @@ export default class SpatialAnalyzer {
     return 'Higher parking provision may be needed';
   }
 
+  /**
+   * Get information about available datasets and their sources
+   */
+  getAvailableDatasets() {
+    const datasets = {};
+    
+    for (const [name, config] of this.constraintLayers) {
+      datasets[name] = {
+        ...config,
+        available: config.source === 'planning_data_api' || config.source === 'derived',
+        entityCount: this.getDatasetEntityCount(config.dataset),
+        lastUpdated: config.lastUpdated,
+        coverage: config.source === 'planning_data_api' ? 'England' : 'Variable'
+      };
+    }
+
+    return {
+      datasets,
+      totalDatasets: Object.keys(datasets).length,
+      availableDatasets: Object.values(datasets).filter(d => d.available).length,
+      categories: this.datasetCategories,
+      datasetsByCategory: this.groupDatasetsByCategory(),
+      recommendedCombinations: this.getRecommendedDatasetCombinations()
+    };
+  }
+
+  /**
+   * Get entity count for datasets (based on the provided data)
+   */
+  getDatasetEntityCount(dataset) {
+    const entityCounts = {
+      'conservation-area': 11388,
+      'listed-building': 378171,
+      'listed-building-outline': 61934,
+      'scheduled-monument': 20015,
+      'park-and-garden': 1718,
+      'world-heritage-site': 20,
+      'world-heritage-site-buffer-zone': 9,
+      'battlefield': 47,
+      'heritage-at-risk': 5464,
+      'protected-wreck-site': 57,
+      'locally-listed-building': 448,
+      'archaeological-priority-area': 738,
+      'flood-risk-zone': 780636,
+      'area-of-outstanding-natural-beauty': 34,
+      'site-of-special-scientific-interest': 4129,
+      'special-area-of-conservation': 260,
+      'special-protection-area': 88,
+      'ramsar': 73,
+      'ancient-woodland': 44373,
+      'green-belt': 188,
+      'tree-preservation-zone': 44473,
+      'tree': 115299,
+      'national-nature-reserve': 223,
+      'local-nature-reserve': 1710,
+      'air-quality-management-area': 498,
+      'agricultural-land-classification': 585,
+      'flood-storage-area': 509,
+      'heritage-coast': 32,
+      'nature-improvement-area': 12,
+      'article-4-direction-area': 4373,
+      'brownfield-land': 37228,
+      'brownfield-site': 2852,
+      'central-activities-zone': 10,
+      'building-preservation-notice': 10,
+      'certificate-of-immunity': 384,
+      'local-planning-authority': 337,
+      'local-authority-district': 344,
+      'parish': 10907,
+      'ward': 6817,
+      'national-park': 10,
+      'transport-access-node': 361132,
+      'infrastructure-project': 233,
+      'educational-establishment': 47047,
+      'built-up-area': 7157,
+      'title-boundary': 2435130
+    };
+    
+    return entityCounts[dataset] || 0;
+  }
+
+  /**
+   * Group datasets by category for easier navigation
+   */
+  groupDatasetsByCategory() {
+    const grouped = {};
+    
+    for (const [category, datasets] of Object.entries(this.datasetCategories)) {
+      grouped[category] = datasets.map(dataset => {
+        const config = this.constraintLayers.get(dataset);
+        return {
+          dataset,
+          name: config?.description || dataset,
+          priority: config?.priority || 'low',
+          type: config?.type || 'unknown',
+          entityCount: this.getDatasetEntityCount(dataset),
+          available: config?.source === 'planning_data_api' || config?.source === 'derived'
+        };
+      }).filter(d => d.available);
+    }
+    
+    return grouped;
+  }
+
+  /**
+   * Get recommended dataset combinations for different use cases
+   */
+  getRecommendedDatasetCombinations() {
+    return {
+      'basic-planning-check': {
+        description: 'Essential datasets for basic planning feasibility',
+        datasets: [
+          'conservation-area',
+          'listed-building',
+          'flood-risk-zone',
+          'green-belt',
+          'local-planning-authority'
+        ],
+        estimatedQueryTime: '2-5 seconds'
+      },
+      'heritage-assessment': {
+        description: 'Comprehensive heritage constraint analysis',
+        datasets: [
+          'conservation-area',
+          'listed-building',
+          'listed-building-outline',
+          'scheduled-monument',
+          'park-and-garden',
+          'world-heritage-site',
+          'battlefield',
+          'heritage-at-risk',
+          'archaeological-priority-area'
+        ],
+        estimatedQueryTime: '5-10 seconds'
+      },
+      'environmental-assessment': {
+        description: 'Environmental and ecological constraints',
+        datasets: [
+          'flood-risk-zone',
+          'area-of-outstanding-natural-beauty',
+          'site-of-special-scientific-interest',
+          'special-area-of-conservation',
+          'special-protection-area',
+          'ramsar',
+          'ancient-woodland',
+          'green-belt',
+          'tree-preservation-zone',
+          'agricultural-land-classification'
+        ],
+        estimatedQueryTime: '5-10 seconds'
+      },
+      'residential-development': {
+        description: 'Key datasets for residential development assessment',
+        datasets: [
+          'conservation-area',
+          'listed-building',
+          'flood-risk-zone',
+          'green-belt',
+          'educational-establishment',
+          'transport-access-node',
+          'local-nature-reserve',
+          'article-4-direction-area'
+        ],
+        estimatedQueryTime: '5-8 seconds'
+      },
+      'commercial-development': {
+        description: 'Datasets relevant for commercial development',
+        datasets: [
+          'conservation-area',
+          'listed-building',
+          'flood-risk-zone',
+          'central-activities-zone',
+          'transport-access-node',
+          'article-4-direction-area',
+          'brownfield-land'
+        ],
+        estimatedQueryTime: '3-7 seconds'
+      },
+      'comprehensive-analysis': {
+        description: 'Full constraint and opportunity analysis',
+        datasets: Object.keys(this.constraintLayers.keys()),
+        estimatedQueryTime: '10-30 seconds'
+      }
+    };
+  }
+
+  /**
+   * Check dataset availability and status
+   */
+  async checkDatasetStatus(datasets = null) {
+    const datasetsToCheck = datasets || Array.from(this.constraintLayers.keys());
+    const status = {};
+    
+    for (const dataset of datasetsToCheck) {
+      const config = this.constraintLayers.get(dataset);
+      if (!config) {
+        status[dataset] = { available: false, error: 'Dataset not configured' };
+        continue;
+      }
+      
+      try {
+        if (config.source === 'planning_data_api') {
+          // Test API availability
+          const testResult = await this.planningDataAPI.testDatasetAvailability(config.dataset);
+          status[dataset] = {
+            available: testResult.available,
+            lastChecked: new Date(),
+            entityCount: this.getDatasetEntityCount(config.dataset),
+            apiStatus: testResult.status
+          };
+        } else if (config.source === 'derived') {
+          // Check if parent dataset is available
+          const parentAvailable = await this.planningDataAPI.testDatasetAvailability(config.deriveFrom);
+          status[dataset] = {
+            available: parentAvailable.available,
+            lastChecked: new Date(),
+            derivedFrom: config.deriveFrom,
+            apiStatus: parentAvailable.status
+          };
+        } else {
+          status[dataset] = {
+            available: false,
+            error: 'External data source not implemented'
+          };
+        }
+      } catch (error) {
+        status[dataset] = {
+          available: false,
+          error: error.message,
+          lastChecked: new Date()
+        };
+      }
+    }
+    
+    return status;
+  }
+
   calculateAnalysisConfidence(constraints, proximities) {
     let confidence = 100;
     
@@ -605,6 +1977,123 @@ export default class SpatialAnalyzer {
     if (proximities.summary.accessible_categories < 3) confidence -= 10;
     
     return Math.max(confidence, 0);
+  }
+
+  /**
+   * Batch analysis for multiple sites
+   */
+  async analyzeSites(sites, analysisOptions = {}) {
+    const results = [];
+    const batchSize = analysisOptions.batchSize || 5;
+    
+    for (let i = 0; i < sites.length; i += batchSize) {
+      const batch = sites.slice(i, i + batchSize);
+      const batchPromises = batch.map(site => 
+        this.analyzeSite(site.geometry, site.address, analysisOptions)
+          .catch(error => ({
+            error: error.message,
+            site: site
+          }))
+      );
+      
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+      
+      // Small delay between batches to avoid overwhelming the API
+      if (i + batchSize < sites.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    
+    return results;
+  }
+
+  /**
+   * Export analysis results in different formats
+   */
+  exportAnalysis(analysis, format = 'json') {
+    switch (format.toLowerCase()) {
+      case 'geojson':
+        return this.exportAsGeoJSON(analysis);
+      case 'summary':
+        return this.exportAsSummary(analysis);
+      case 'csv':
+        return this.exportAsCSV(analysis);
+      default:
+        return analysis;
+    }
+  }
+
+  exportAsGeoJSON(analysis) {
+    return {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          geometry: analysis.geometry,
+          properties: {
+            analysisId: analysis.id,
+            address: analysis.siteAddress,
+            developmentPotential: analysis.planningAssessment?.developmentPotential,
+            constraintCount: analysis.constraints?.total || 0,
+            riskLevel: analysis.planningAssessment?.riskLevel,
+            confidence: analysis.confidence,
+            timestamp: analysis.timestamp
+          }
+        }
+      ]
+    };
+  }
+
+  exportAsSummary(analysis) {
+    return {
+      siteId: analysis.id,
+      address: analysis.siteAddress,
+      coordinates: analysis.coordinates,
+      area: analysis.metrics?.area,
+      developmentPotential: analysis.planningAssessment?.developmentPotential,
+      keyConstraints: analysis.planningAssessment?.keyConstraints || [],
+      keyOpportunities: analysis.planningAssessment?.keyOpportunities || [],
+      riskLevel: analysis.planningAssessment?.riskLevel,
+      confidence: analysis.confidence,
+      summary: {
+        totalConstraints: analysis.constraints?.total || 0,
+        intersectingConstraints: analysis.constraints?.intersecting?.length || 0,
+        criticalConstraints: analysis.constraints?.critical?.length || 0,
+        ptalScore: analysis.transport?.ptal_score,
+        heritageContext: analysis.proximities?.heritage_context?.context,
+        environmentalSensitivity: analysis.proximities?.environmental_context?.ecological_assessment_likely
+      }
+    };
+  }
+
+  exportAsCSV(analysis) {
+    const summary = this.exportAsSummary(analysis);
+    const headers = [
+      'Site ID', 'Address', 'Latitude', 'Longitude', 'Area (m²)',
+      'Development Potential', 'Risk Level', 'Total Constraints',
+      'Critical Constraints', 'PTAL Score', 'Heritage Context', 'Confidence'
+    ];
+    
+    const row = [
+      summary.siteId,
+      summary.address || '',
+      summary.coordinates?.latitude || '',
+      summary.coordinates?.longitude || '',
+      summary.area || '',
+      summary.developmentPotential || '',
+      summary.riskLevel || '',
+      summary.summary.totalConstraints,
+      summary.summary.criticalConstraints,
+      summary.summary.ptalScore || '',
+      summary.summary.heritageContext || '',
+      summary.confidence
+    ];
+    
+    return {
+      headers: headers.join(','),
+      data: row.join(',')
+    };
   }
 
   async calculateGeometricProperties(geometry) {
