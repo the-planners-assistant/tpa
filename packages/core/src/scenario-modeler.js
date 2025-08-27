@@ -3,10 +3,13 @@ import { getDatabase } from './database.js';
 /**
  * ScenarioModeler
  * Interactive scenario planning and impact assessment for local plans
+ * Enhanced with AI-powered scenario analysis and optimization
  */
 export default class ScenarioModeler {
-  constructor(db = getDatabase()) {
+  constructor(db = getDatabase(), agent = null) {
     this.db = db;
+    this.agent = agent;
+    this.enableAI = !!agent;
     this.defaultParameters = {
       housing: {
         totalUnits: 1000,
@@ -93,7 +96,12 @@ export default class ScenarioModeler {
   /**
    * Run scenario modeling and impact assessment
    */
-  async runScenarioModeling(scenarioId) {
+  /**
+   * Run scenario modeling with AI enhancement
+   */
+  async runScenarioModeling(scenarioId, options = {}) {
+    const { enableAIAnalysis = this.enableAI, includeOptimization = true } = options;
+    
     const scenario = await this.db.scenarios.get(scenarioId);
     if (!scenario) {
       throw new Error('Scenario not found');
@@ -107,28 +115,43 @@ export default class ScenarioModeler {
         .equals(scenario.planId)
         .toArray();
 
+      // AI-enhanced scenario analysis if enabled
+      let aiAnalysis = null;
+      if (enableAIAnalysis && this.agent) {
+        aiAnalysis = await this._runAIScenarioAnalysis(scenario, localPlan, siteAllocations);
+      }
+
       // Run impact assessments
       const results = {
-        housing: await this._assessHousingImpacts(scenario.parameters, siteAllocations),
-        employment: await this._assessEmploymentImpacts(scenario.parameters, siteAllocations),
-        transport: await this._assessTransportImpacts(scenario.parameters, siteAllocations),
-        environment: await this._assessEnvironmentalImpacts(scenario.parameters, siteAllocations),
-        infrastructure: await this._assessInfrastructureNeeds(scenario.parameters, siteAllocations),
-        viability: await this._assessViability(scenario.parameters, siteAllocations),
-        risks: await this._identifyRisks(scenario.parameters, siteAllocations),
+        housing: await this._assessHousingImpacts(scenario.parameters, siteAllocations, aiAnalysis),
+        employment: await this._assessEmploymentImpacts(scenario.parameters, siteAllocations, aiAnalysis),
+        transport: await this._assessTransportImpacts(scenario.parameters, siteAllocations, aiAnalysis),
+        environment: await this._assessEnvironmentalImpacts(scenario.parameters, siteAllocations, aiAnalysis),
+        infrastructure: await this._assessInfrastructureNeeds(scenario.parameters, siteAllocations, aiAnalysis),
+        viability: await this._assessViability(scenario.parameters, siteAllocations, aiAnalysis),
+        risks: await this._identifyRisks(scenario.parameters, siteAllocations, aiAnalysis),
         timeline: this._generateTimeline(scenario.parameters),
-        summary: {}
+        summary: {},
+        aiAnalysis
       };
 
       // Generate summary metrics
-      results.summary = this._generateSummary(results);
+      results.summary = this._generateSummary(results, aiAnalysis);
+
+      // AI-powered optimization suggestions
+      if (includeOptimization && aiAnalysis) {
+        results.optimizationSuggestions = await this._generateOptimizationSuggestions(
+          scenario, results, aiAnalysis
+        );
+      }
 
       // Update scenario with results
       await this.db.scenarios.update(scenarioId, {
         results,
         status: 'modeled',
         modeledAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        aiEnhanced: enableAIAnalysis
       });
 
       return results;
@@ -144,9 +167,95 @@ export default class ScenarioModeler {
   }
 
   /**
+   * AI-enhanced scenario analysis
+   */
+  async _runAIScenarioAnalysis(scenario, localPlan, siteAllocations) {
+    if (!this.agent) {
+      console.warn('AI agent not available for scenario analysis');
+      return null;
+    }
+
+    try {
+      // Use the LocalPlanAgent for intelligent scenario modeling
+      const analysis = await this.agent.runIntelligentScenarioModeling({
+        scenario: {
+          parameters: scenario.parameters,
+          description: scenario.description,
+          name: scenario.name
+        },
+        localPlan,
+        siteAllocations,
+        analysisOptions: {
+          includeViabilityAssessment: true,
+          includeSustainabilityAnalysis: true,
+          includeInfrastructureModeling: true,
+          includeRiskAssessment: true,
+          optimizationLevel: 'comprehensive'
+        }
+      });
+
+      return {
+        overallAssessment: analysis.overallAssessment,
+        housingAnalysis: analysis.housingAnalysis,
+        employmentAnalysis: analysis.employmentAnalysis,
+        transportAnalysis: analysis.transportAnalysis,
+        environmentalAnalysis: analysis.environmentalAnalysis,
+        infrastructureAnalysis: analysis.infrastructureAnalysis,
+        viabilityAnalysis: analysis.viabilityAnalysis,
+        riskAssessment: analysis.riskAssessment,
+        optimizationSuggestions: analysis.optimizationSuggestions,
+        confidence: analysis.confidence || 0.8,
+        reasoning: analysis.reasoning
+      };
+    } catch (error) {
+      console.error('AI scenario analysis failed:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Generate AI-powered optimization suggestions
+   */
+  async _generateOptimizationSuggestions(scenario, modelingResults, aiAnalysis) {
+    if (!aiAnalysis || !aiAnalysis.optimizationSuggestions) {
+      return null;
+    }
+
+    return {
+      housingOptimizations: aiAnalysis.optimizationSuggestions.housing || [],
+      employmentOptimizations: aiAnalysis.optimizationSuggestions.employment || [],
+      transportOptimizations: aiAnalysis.optimizationSuggestions.transport || [],
+      environmentalOptimizations: aiAnalysis.optimizationSuggestions.environmental || [],
+      infrastructureOptimizations: aiAnalysis.optimizationSuggestions.infrastructure || [],
+      viabilityImprovements: aiAnalysis.optimizationSuggestions.viability || [],
+      riskMitigations: aiAnalysis.optimizationSuggestions.riskMitigation || [],
+      overallRecommendations: aiAnalysis.optimizationSuggestions.overall || [],
+      confidence: aiAnalysis.confidence,
+      implementationPriority: aiAnalysis.optimizationSuggestions.priority || 'medium'
+    };
+  }
+
+  /**
+   * Enable AI features for scenario modeling
+   */
+  enableAIFeatures(agent) {
+    this.agent = agent;
+    this.enableAI = true;
+    console.log('AI features enabled for ScenarioModeler');
+  }
+
+  /**
+   * Disable AI features (fall back to rule-based only)
+   */
+  disableAIFeatures() {
+    this.enableAI = false;
+    console.log('AI features disabled for ScenarioModeler');
+  }
+
+  /**
    * Assess housing impacts
    */
-  async _assessHousingImpacts(parameters, siteAllocations) {
+  async _assessHousingImpacts(parameters, siteAllocations, aiAnalysis = null) {
     const housing = parameters.housing;
     
     // Calculate total capacity from site allocations
@@ -164,7 +273,8 @@ export default class ScenarioModeler {
     // Calculate shortfall/surplus
     const capacityShortfall = housing.totalUnits - allocatedCapacity;
 
-    return {
+    // Base assessment
+    const baseAssessment = {
       totalUnits: housing.totalUnits,
       affordableUnits,
       marketUnits: housing.totalUnits - affordableUnits,
@@ -176,12 +286,34 @@ export default class ScenarioModeler {
       deliveryFeasibility: this._assessDeliveryFeasibility(annualDelivery, siteAllocations.length),
       risks: this._identifyHousingRisks(housing, capacityShortfall)
     };
+
+    // Enhance with AI analysis if available
+    if (aiAnalysis && aiAnalysis.housingAnalysis) {
+      baseAssessment.aiEnhancement = {
+        deliverabilityScore: aiAnalysis.housingAnalysis.deliverabilityScore,
+        marketAbsorptionRate: aiAnalysis.housingAnalysis.marketAbsorptionRate,
+        viabilityAssessment: aiAnalysis.housingAnalysis.viabilityAssessment,
+        phaseOptimization: aiAnalysis.housingAnalysis.phaseOptimization,
+        densityRecommendations: aiAnalysis.housingAnalysis.densityRecommendations,
+        affordabilityStrategy: aiAnalysis.housingAnalysis.affordabilityStrategy,
+        spatialDistributionAdvice: aiAnalysis.housingAnalysis.spatialDistribution,
+        riskMitigation: aiAnalysis.housingAnalysis.riskMitigation,
+        confidence: aiAnalysis.confidence
+      };
+
+      // Adjust base metrics based on AI insights
+      if (aiAnalysis.housingAnalysis.adjustedAnnualDelivery) {
+        baseAssessment.aiAdjustedDelivery = aiAnalysis.housingAnalysis.adjustedAnnualDelivery;
+      }
+    }
+
+    return baseAssessment;
   }
 
   /**
    * Assess employment impacts
    */
-  async _assessEmploymentImpacts(parameters, siteAllocations) {
+  async _assessEmploymentImpacts(parameters, siteAllocations, aiAnalysis = null) {
     const employment = parameters.employment;
     
     // Calculate employment land needs by sector
@@ -222,7 +354,7 @@ export default class ScenarioModeler {
   /**
    * Assess transport impacts
    */
-  async _assessTransportImpacts(parameters, siteAllocations) {
+  async _assessTransportImpacts(parameters, siteAllocations, aiAnalysis = null) {
     const housing = parameters.housing;
     const employment = parameters.employment;
     const infrastructure = parameters.infrastructure;
@@ -255,7 +387,7 @@ export default class ScenarioModeler {
   /**
    * Assess environmental impacts
    */
-  async _assessEnvironmentalImpacts(parameters, siteAllocations) {
+  async _assessEnvironmentalImpacts(parameters, siteAllocations, aiAnalysis = null) {
     const environment = parameters.environment;
     const housing = parameters.housing;
 
@@ -293,7 +425,7 @@ export default class ScenarioModeler {
   /**
    * Assess infrastructure needs
    */
-  async _assessInfrastructureNeeds(parameters, siteAllocations) {
+  async _assessInfrastructureNeeds(parameters, siteAllocations, aiAnalysis = null) {
     const housing = parameters.housing;
     const infrastructure = parameters.infrastructure;
     const population = housing.totalUnits * 2.4; // Average household size
@@ -335,7 +467,7 @@ export default class ScenarioModeler {
   /**
    * Assess scenario viability
    */
-  async _assessViability(parameters, siteAllocations) {
+  async _assessViability(parameters, siteAllocations, aiAnalysis = null) {
     const housing = parameters.housing;
     const employment = parameters.employment;
 
@@ -371,7 +503,7 @@ export default class ScenarioModeler {
   /**
    * Identify scenario risks
    */
-  async _identifyRisks(parameters, siteAllocations) {
+  async _identifyRisks(parameters, siteAllocations, aiAnalysis = null) {
     const risks = [];
 
     // Delivery risks
@@ -446,8 +578,8 @@ export default class ScenarioModeler {
   /**
    * Generate scenario summary
    */
-  _generateSummary(results) {
-    return {
+  _generateSummary(results, aiAnalysis = null) {
+    const baseSummary = {
       overallViability: results.viability.viabilityStatus,
       keyMetrics: {
         housingDelivery: results.housing.totalUnits,
@@ -460,6 +592,27 @@ export default class ScenarioModeler {
       recommendations: this._generateRecommendations(results),
       successProbability: this._calculateSuccessProbability(results)
     };
+
+    // Enhance with AI insights if available
+    if (aiAnalysis && aiAnalysis.overallAssessment) {
+      baseSummary.aiEnhancement = {
+        overallScore: aiAnalysis.overallAssessment.score,
+        strategicRecommendations: aiAnalysis.overallAssessment.recommendations,
+        criticalSuccessFactors: aiAnalysis.overallAssessment.successFactors,
+        implementationPriorities: aiAnalysis.overallAssessment.priorities,
+        riskAdjustedProbability: aiAnalysis.overallAssessment.adjustedSuccessProbability,
+        optimizationPotential: aiAnalysis.overallAssessment.optimizationPotential,
+        confidence: aiAnalysis.confidence,
+        keyInsights: aiAnalysis.reasoning
+      };
+
+      // AI-adjusted success probability
+      if (aiAnalysis.overallAssessment.adjustedSuccessProbability) {
+        baseSummary.aiAdjustedSuccessProbability = aiAnalysis.overallAssessment.adjustedSuccessProbability;
+      }
+    }
+
+    return baseSummary;
   }
 
   /**

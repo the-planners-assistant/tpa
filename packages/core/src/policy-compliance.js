@@ -1,14 +1,17 @@
 import { getDatabase } from './database.js';
 import ApplicantDataManager from './applicant-data-manager.js';
+import Agent from './agent.js';
 
 /**
  * PolicyComplianceEngine
- * Automated policy matching, compliance scoring, gap analysis, and recommendation generation
+ * AI-enhanced policy matching, compliance scoring, gap analysis, and recommendation generation
  */
 export default class PolicyComplianceEngine {
-  constructor(db = getDatabase()) {
+  constructor(db = getDatabase(), agentConfig = {}) {
     this.db = db;
-    this.applicantDataManager = new ApplicantDataManager(db);
+    this.applicantDataManager = new ApplicantDataManager(db, agentConfig);
+    this.agent = new Agent(agentConfig);
+    this.enableAI = agentConfig.googleApiKey ? true : false;
     
     // Compliance scoring weights
     this.scoringWeights = {
@@ -21,13 +24,15 @@ export default class PolicyComplianceEngine {
   }
 
   /**
-   * Run comprehensive policy compliance check
+   * Run comprehensive policy compliance check with AI enhancement
    */
   async runComplianceCheck(applicationId, localPlanId, options = {}) {
     const {
       generateRecommendations = true,
       detailedAnalysis = true,
-      includeGapAnalysis = true
+      includeGapAnalysis = true,
+      enableAIAnalysis = this.enableAI,
+      confidenceThreshold = 0.7
     } = options;
 
     try {
@@ -37,6 +42,12 @@ export default class PolicyComplianceEngine {
         throw new Error('Application not found');
       }
 
+      // AI-enhanced application assessment if enabled
+      let aiAssessment = null;
+      if (enableAIAnalysis && this.enableAI) {
+        aiAssessment = await this._runAIComplianceAssessment(application, localPlanId);
+      }
+
       // Get relevant local plan policies
       const relevantPolicies = await this.applicantDataManager
         .linkToLocalPlanPolicies(application, localPlanId);
@@ -44,7 +55,12 @@ export default class PolicyComplianceEngine {
       // Check compliance against each relevant policy
       const complianceResults = [];
       for (const { policy, relevance } of relevantPolicies) {
-        const compliance = await this._checkPolicyCompliance(application, policy, detailedAnalysis);
+        const compliance = await this._checkPolicyCompliance(
+          application, 
+          policy, 
+          detailedAnalysis,
+          aiAssessment
+        );
         complianceResults.push({
           policy,
           relevance,
@@ -55,18 +71,22 @@ export default class PolicyComplianceEngine {
       }
 
       // Calculate overall compliance score
-      const overallScore = this._calculateOverallScore(complianceResults);
+      const overallScore = this._calculateOverallScore(complianceResults, aiAssessment);
 
-      // Generate gap analysis
+      // Generate enhanced gap analysis
       let gapAnalysis = null;
       if (includeGapAnalysis) {
-        gapAnalysis = await this._generateGapAnalysis(complianceResults, application);
+        gapAnalysis = await this._generateGapAnalysis(complianceResults, application, aiAssessment);
       }
 
-      // Generate recommendations
+      // Generate AI-enhanced recommendations
       let recommendations = null;
       if (generateRecommendations) {
-        recommendations = await this._generateRecommendations(complianceResults, gapAnalysis);
+        recommendations = await this._generateRecommendations(
+          complianceResults, 
+          gapAnalysis, 
+          aiAssessment
+        );
       }
 
       // Store compliance check in database
@@ -75,9 +95,10 @@ export default class PolicyComplianceEngine {
         policyId: localPlanId,
         status: this._getComplianceStatus(overallScore),
         score: overallScore,
-        notes: `Checked against ${complianceResults.length} relevant policies`,
+        notes: `Checked against ${complianceResults.length} relevant policies${enableAIAnalysis ? ' (AI-enhanced)' : ''}`,
         checkedAt: new Date().toISOString(),
-        assessorId: 'system'
+        assessorId: 'system',
+        aiEnhanced: enableAIAnalysis
       });
 
       return {
@@ -89,23 +110,68 @@ export default class PolicyComplianceEngine {
         policyResults: complianceResults,
         gapAnalysis,
         recommendations,
+        aiAssessment,
+        confidence: this._calculateConfidence(complianceResults, aiAssessment),
         metadata: {
           checkedAt: new Date().toISOString(),
           policiesEvaluated: complianceResults.length,
-          averageRelevance: relevantPolicies.reduce((sum, p) => sum + p.relevance, 0) / relevantPolicies.length
+          averageRelevance: relevantPolicies.reduce((sum, p) => sum + p.relevance, 0) / relevantPolicies.length,
+          aiEnhanced: enableAIAnalysis
         }
       };
-
     } catch (error) {
-      console.error('Compliance check failed:', error);
-      throw new Error(`Compliance check failed: ${error.message}`);
+      console.error('Policy compliance check failed:', error);
+      throw new Error(`Failed to run compliance check: ${error.message}`);
     }
   }
 
   /**
-   * Check compliance against a specific policy
+   * AI-enhanced policy compliance assessment
    */
-  async _checkPolicyCompliance(application, policy, detailed = true) {
+  async _runAIComplianceAssessment(application, localPlanId) {
+    if (!this.agent) {
+      console.warn('AI agent not available for compliance assessment');
+      return null;
+    }
+
+    try {
+      const localPlan = await this.db.localPlans.get(localPlanId);
+      if (!localPlan) {
+        throw new Error('Local plan not found');
+      }
+
+      // Use the LocalPlanAgent for intelligent assessment
+      const assessment = await this.agent.assessApplicationCompliance({
+        application,
+        localPlan,
+        analysisOptions: {
+          includeSpacialAnalysis: true,
+          includePolicyMatching: true,
+          includeDesignGuidanceAssessment: true,
+          includeConstraintAnalysis: true
+        }
+      });
+
+      return {
+        overallAssessment: assessment.overallAssessment,
+        policyAlignment: assessment.policyAlignment,
+        spatialCompliance: assessment.spatialCompliance,
+        designCompliance: assessment.designCompliance,
+        constraintCompliance: assessment.constraintCompliance,
+        recommendations: assessment.recommendations,
+        confidence: assessment.confidence || 0.8,
+        reasoning: assessment.reasoning
+      };
+    } catch (error) {
+      console.error('AI compliance assessment failed:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Check compliance against a specific policy with AI enhancement
+   */
+  async _checkPolicyCompliance(application, policy, detailed = true, aiAssessment = null) {
     const compliance = {
       overallScore: 0,
       criteria: [],
@@ -451,9 +517,9 @@ export default class PolicyComplianceEngine {
   }
 
   /**
-   * Calculate overall compliance score
+   * Calculate overall compliance score with AI enhancement
    */
-  _calculateOverallScore(complianceResults) {
+  _calculateOverallScore(complianceResults, aiAssessment = null) {
     if (complianceResults.length === 0) return 0;
 
     const weightedSum = complianceResults.reduce((sum, result) => {
@@ -464,7 +530,41 @@ export default class PolicyComplianceEngine {
       return sum + result.relevance;
     }, 0);
 
-    return totalWeight > 0 ? weightedSum / totalWeight : 0;
+    let baseScore = totalWeight > 0 ? weightedSum / totalWeight : 0;
+
+    // Incorporate AI assessment if available
+    if (aiAssessment && aiAssessment.overallAssessment) {
+      const aiScore = aiAssessment.overallAssessment.complianceScore || 0;
+      const aiConfidence = aiAssessment.confidence || 0.5;
+      
+      // Weighted combination of rule-based and AI scores
+      baseScore = (baseScore * (1 - aiConfidence * 0.3)) + (aiScore * aiConfidence * 0.3);
+    }
+
+    return Math.min(1.0, Math.max(0.0, baseScore));
+  }
+
+  /**
+   * Calculate confidence score for the assessment
+   */
+  _calculateConfidence(complianceResults, aiAssessment = null) {
+    let confidence = 0.7; // Base confidence for rule-based assessment
+
+    // Adjust based on number of policies evaluated
+    const policyCount = complianceResults.length;
+    if (policyCount >= 5) confidence += 0.1;
+    if (policyCount >= 10) confidence += 0.1;
+
+    // Adjust based on average relevance
+    const avgRelevance = complianceResults.reduce((sum, r) => sum + r.relevance, 0) / policyCount;
+    confidence += (avgRelevance - 0.5) * 0.2;
+
+    // Incorporate AI confidence if available
+    if (aiAssessment && aiAssessment.confidence) {
+      confidence = (confidence + aiAssessment.confidence) / 2;
+    }
+
+    return Math.min(1.0, Math.max(0.3, confidence));
   }
 
   /**
@@ -478,56 +578,71 @@ export default class PolicyComplianceEngine {
   }
 
   /**
-   * Generate gap analysis
+   * Generate enhanced gap analysis with AI insights
    */
-  async _generateGapAnalysis(complianceResults, application) {
+  async _generateGapAnalysis(complianceResults, application, aiAssessment = null) {
     const gaps = {
       critical: [],
       moderate: [],
       minor: [],
       missing_documents: [],
-      recommendations: []
+      recommendations: [],
+      aiInsights: null
     };
 
+    // Process rule-based gaps
     complianceResults.forEach(result => {
       result.compliance.weaknesses.forEach(weakness => {
         const gap = {
           policy: result.policy.policyRef,
           issue: weakness,
           severity: result.complianceScore < 0.3 ? 'critical' : 
-                   result.complianceScore < 0.6 ? 'moderate' : 'minor'
+                   result.complianceScore < 0.6 ? 'moderate' : 'minor',
+          source: 'rule-based'
         };
 
         gaps[gap.severity].push(gap);
       });
     });
 
-    // Check for missing standard documents
-    const submittedDocs = application.extractedData?.statements?.map(s => s.type) || [];
-    const standardDocs = ['Design and Access Statement', 'Planning Statement'];
-    
-    standardDocs.forEach(docType => {
-      if (!submittedDocs.includes(docType)) {
-        gaps.missing_documents.push({
-          document: docType,
-          importance: 'high',
-          reason: 'Standard requirement for this type of application'
+    // Incorporate AI assessment gaps
+    if (aiAssessment) {
+      gaps.aiInsights = {
+        spatialGaps: aiAssessment.spatialCompliance?.gaps || [],
+        designGaps: aiAssessment.designCompliance?.gaps || [],
+        policyGaps: aiAssessment.policyAlignment?.gaps || [],
+        constraintGaps: aiAssessment.constraintCompliance?.gaps || []
+      };
+
+      // Add AI-identified critical gaps
+      if (aiAssessment.recommendations) {
+        aiAssessment.recommendations.forEach(rec => {
+          if (rec.priority === 'critical' || rec.priority === 'high') {
+            gaps.critical.push({
+              policy: rec.policyRef || 'AI-identified',
+              issue: rec.issue,
+              severity: 'critical',
+              source: 'AI-analysis',
+              aiReasoning: rec.reasoning
+            });
+          }
         });
       }
-    });
+    }
 
     return gaps;
   }
 
   /**
-   * Generate recommendations
+   * Generate enhanced recommendations with AI insights
    */
-  async _generateRecommendations(complianceResults, gapAnalysis) {
+  async _generateRecommendations(complianceResults, gapAnalysis, aiAssessment = null) {
     const recommendations = {
       immediate_actions: [],
       improvements: [],
       additional_evidence: [],
-      risk_mitigation: []
+      risk_mitigation: [],
+      ai_insights: null
     };
 
     // Generate recommendations based on gaps
@@ -536,7 +651,8 @@ export default class PolicyComplianceEngine {
         priority: 'high',
         action: 'Address critical policy compliance gaps',
         details: gapAnalysis.critical.map(gap => gap.issue),
-        timeline: 'Before determination'
+        timeline: 'Before determination',
+        source: 'rule-based'
       });
     }
 
@@ -545,7 +661,8 @@ export default class PolicyComplianceEngine {
         priority: 'high',
         action: 'Submit missing required documents',
         details: gapAnalysis.missing_documents.map(doc => doc.document),
-        timeline: 'As soon as possible'
+        timeline: 'As soon as possible',
+        source: 'rule-based'
       });
     }
 
@@ -556,12 +673,52 @@ export default class PolicyComplianceEngine {
           priority: 'medium',
           action: `Improve compliance with ${result.policy.policyRef}`,
           details: result.compliance.weaknesses,
-          policy: result.policy.title
+          policy: result.policy.title,
+          source: 'rule-based'
         });
       }
     });
 
+    // Incorporate AI recommendations
+    if (aiAssessment && aiAssessment.recommendations) {
+      recommendations.ai_insights = {
+        recommendations: aiAssessment.recommendations,
+        reasoning: aiAssessment.reasoning
+      };
+
+      // Add high-priority AI recommendations to immediate actions
+      aiAssessment.recommendations
+        .filter(rec => rec.priority === 'critical' || rec.priority === 'high')
+        .forEach(rec => {
+          recommendations.immediate_actions.push({
+            priority: rec.priority,
+            action: rec.action || rec.issue,
+            details: [rec.description || rec.reasoning],
+            timeline: rec.timeline || 'Before determination',
+            source: 'AI-analysis',
+            confidence: rec.confidence
+          });
+        });
+    }
+
     return recommendations;
+  }
+
+  /**
+   * Enable AI-enhanced compliance checking
+   */
+  enableAIFeatures(agent) {
+    this.agent = agent;
+    this.enableAI = true;
+    console.log('AI features enabled for PolicyComplianceEngine');
+  }
+
+  /**
+   * Disable AI features (fall back to rule-based only)
+   */
+  disableAIFeatures() {
+    this.enableAI = false;
+    console.log('AI features disabled for PolicyComplianceEngine');
   }
 
   /**

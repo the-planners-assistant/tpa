@@ -1,19 +1,22 @@
 import { getDatabase } from './database.js';
 import PolicyEngine from './policy-engine.js';
+import Agent from './agent.js';
 
 /**
  * ApplicantDataManager
- * Handles application document processing, site-specific data extraction,
+ * AI-enhanced application document processing, site-specific data extraction,
  * constraint overlay, and policy compliance checking
  */
 export default class ApplicantDataManager {
-  constructor(db = getDatabase()) {
+  constructor(db = getDatabase(), agentConfig = {}) {
     this.db = db;
     this.policyEngine = new PolicyEngine(db);
+    this.agent = new Agent(agentConfig);
+    this.enableAI = agentConfig.googleApiKey ? true : false;
   }
 
   /**
-   * Process uploaded application documents
+   * Process uploaded application documents with AI enhancement
    */
   async processApplicationDocuments(files, applicationData = {}) {
     const results = {
@@ -21,26 +24,63 @@ export default class ApplicantDataManager {
       extractedData: {},
       siteInfo: null,
       constraints: [],
-      errors: []
+      errors: [],
+      aiAnalysis: null
     };
 
     try {
-      // Process each uploaded file
+      // Use AI agent for comprehensive document processing if available
+      if (this.enableAI && files.length > 0) {
+        const agentResults = await this.agent.assessPlanningApplication(files, {
+          skipRecommendation: true,
+          extractDataOnly: true,
+          ...applicationData
+        });
+        
+        results.aiAnalysis = {
+          extractedData: agentResults.results.documents?.extractedData,
+          addressResolution: agentResults.results.address,
+          spatialAnalysis: agentResults.results.spatial,
+          confidence: agentResults.confidence
+        };
+        
+        // Use AI-extracted data as primary source
+        if (agentResults.results.documents?.extractedData) {
+          results.extractedData = agentResults.results.documents.extractedData;
+        }
+        
+        if (agentResults.results.address?.primaryAddress) {
+          results.siteInfo = {
+            address: agentResults.results.address.primaryAddress,
+            coordinates: agentResults.results.address.primaryAddress.coordinates
+          };
+        }
+        
+        if (agentResults.results.spatial?.constraints) {
+          results.constraints = agentResults.results.spatial.constraints;
+        }
+      }
+
+      // Process each uploaded file (fallback or supplementary)
       for (const file of files) {
         const processed = await this._processApplicationFile(file, applicationData);
         results.processedDocuments.push(processed);
       }
 
-      // Extract site information
-      results.siteInfo = await this._extractSiteInformation(results.processedDocuments);
+      // Extract site information if not from AI
+      if (!results.siteInfo) {
+        results.siteInfo = await this._extractSiteInformation(results.processedDocuments);
+      }
       
-      // Identify relevant constraints
-      if (results.siteInfo && results.siteInfo.coordinates) {
+      // Identify relevant constraints if not from AI
+      if (!results.constraints.length && results.siteInfo?.coordinates) {
         results.constraints = await this._identifyConstraints(results.siteInfo.coordinates);
       }
 
-      // Extract structured data from documents
-      results.extractedData = await this._extractStructuredData(results.processedDocuments);
+      // Extract structured data if not from AI
+      if (!Object.keys(results.extractedData).length) {
+        results.extractedData = await this._extractStructuredData(results.processedDocuments);
+      }
 
       return results;
     } catch (error) {
