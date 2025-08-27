@@ -4,6 +4,7 @@ import ExportButton from '@tpa/ui/src/components/ExportButton';
 import Agent from '@tpa/core/src/agent.js';
 import { ProcessingProgressBar } from '@tpa/ui/src/components/ProcessingProgressBar.js';
 import BalanceWidget from '@tpa/ui/src/components/BalanceWidget.js';
+import LocalPlanComplianceWidget from '@tpa/ui/src/components/LocalPlanComplianceWidget.js';
 import { ConstraintMap } from '@tpa/map';
 import { assessmentStore } from '@tpa/ui/src/components/assessmentStore.js';
 
@@ -700,6 +701,15 @@ export default function DevelopmentManagement() {
                   <PlanningBalanceBox assessment={assessment} onOverride={handleBalanceOverride} />
                 </div>
               )}
+
+              {/* Local Plan Compliance Widget */}
+              <LocalPlanComplianceWidget
+                assessment={assessment}
+                onComplianceResults={(results) => {
+                  console.log('Received compliance results:', results);
+                  // Could integrate results into the assessment display
+                }}
+              />
             </div>
           </div>
         </div>
