@@ -1467,6 +1467,25 @@ Respond in JSON format:
     const merged = { ...existing };
     
     for (const [key, value] of Object.entries(newData)) {
+      if (key === 'fullText') {
+        // Concatenate unique text segments (avoid duplicate concatenation)
+        const existingText = merged.fullText || '';
+        if (!existingText.includes(value)) {
+          merged.fullText = existingText ? (existingText + '\n\n' + value) : value;
+        }
+        continue;
+      }
+      if (key === 'addresses' && Array.isArray(value)) {
+        const current = Array.isArray(merged.addresses) ? merged.addresses : [];
+        const combined = [...current, ...value];
+        // Dedupe by lower‑cased string form
+        const seen = new Set();
+        merged.addresses = combined.filter(a => {
+          const repr = (typeof a === 'string' ? a : JSON.stringify(a)).toLowerCase();
+          if (seen.has(repr)) return false; seen.add(repr); return true;
+        });
+        continue;
+      }
       if (merged[key] === undefined) {
         merged[key] = value;
       } else if (Array.isArray(merged[key]) && Array.isArray(value)) {

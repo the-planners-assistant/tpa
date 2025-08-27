@@ -1,26 +1,36 @@
 import Head from 'next/head';
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ChevronDown, ArrowRight, FileText, Layers, CheckCircle2, Sparkles } from "lucide-react";
 
 // TPA Homepage — merged: SVG logo + final nav/copy + AGPL footer
 
-function Menu({ label, children, tooltip }) {
-  const [open, setOpen] = useState(false);
+// Accessible popover menu for desktop
+function DesktopPopover({ id, label, tooltip, active, onOpen, onClose, children }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    function handleKey(e){
+      if (e.key === 'Escape') onClose();
+    }
+    if (active) document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [active, onClose]);
   return (
-    <div className="relative" onMouseLeave={() => setOpen(false)}>
+    <div className="relative" ref={ref}>
       <button
-        className="inline-flex items-center gap-1 px-3 py-2 text-sm text-zinc-800 hover:text-zinc-900"
-        aria-haspopup="menu"
-        aria-expanded={open}
+        className={`inline-flex items-center gap-1 px-3 py-2 text-sm font-medium ${active ? 'text-zinc-900' : 'text-zinc-800 hover:text-zinc-900'}`}
+        aria-haspopup="true"
+        aria-expanded={active}
         title={tooltip}
-        onClick={() => setOpen(!open)}
-        onMouseEnter={() => setOpen(true)}
+        onClick={() => (active ? onClose() : onOpen(id))}
       >
         {label}
-        <ChevronDown className="h-4 w-4" />
+        <ChevronDown className={`h-4 w-4 transition-transform ${active ? 'rotate-180' : ''}`} />
       </button>
-      {open && (
-        <div role="menu" className="absolute left-0 mt-2 min-w-[240px] rounded-md border border-zinc-200 bg-white shadow-lg z-50">
+      {active && (
+        <div
+          role="menu"
+          className="absolute left-0 mt-2 min-w-[260px] rounded-md border border-zinc-200 bg-white shadow-lg z-50 animate-fadeIn"
+        >
           <div className="py-1">{children}</div>
         </div>
       )}
@@ -72,9 +82,24 @@ function SplitCTA() {
 }
 
 function Header() {
+  const [activeMenu, setActiveMenu] = useState(null); // desktop
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileSections, setMobileSections] = useState({ try:false, help:false });
+
+  // Close menus on outside click (desktop)
+  useEffect(() => {
+    function handleClick(e){
+      if (!e.target.closest || !e.target.closest('[data-desktop-nav-root]')) {
+        setActiveMenu(null);
+      }
+    }
+    if (activeMenu) document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, [activeMenu]);
+
   return (
     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-zinc-200">
-      <div className="mx-auto max-w-6xl h-16 px-4 sm:px-6 flex items-center justify-between">
+      <div className="mx-auto max-w-6xl h-16 px-4 sm:px-6 flex items-center justify-between" data-desktop-nav-root>
         {/* Logo left-aligned with your SVG */}
         <a href="/" className="flex items-center gap-2 font-semibold text-zinc-900" aria-label="The Planner's Assistant home">
           <span className="inline-flex items-center">
@@ -109,22 +134,89 @@ function Header() {
           </span>
           <span className="hidden sm:inline">The Planner's Assistant</span>
         </a>
+        {/* Desktop nav */}
         <nav className="hidden md:flex items-center gap-2">
-          <Menu label="Try the tool" tooltip="Open the Planner's Assistant sandbox.">
+          <DesktopPopover
+            id="try"
+            label="Try the tool"
+            tooltip="Open the Planner's Assistant sandbox."
+            active={activeMenu==='try'}
+            onOpen={setActiveMenu}
+            onClose={() => setActiveMenu(null)}
+          >
             <MenuItem title="Assess an application" desc="Upload docs and walk a DM case." href="/tool/development-management" />
             <MenuItem title="Explore a local plan" desc="Review or model a plan scenario." href="/tool/local-plan" />
-          </Menu>
-          <Menu label="Help build it" tooltip="Ways to contribute code, data, or ideas.">
+          </DesktopPopover>
+          <DesktopPopover
+            id="help"
+            label="Help build it"
+            tooltip="Ways to contribute code, data, or ideas."
+            active={activeMenu==='help'}
+            onOpen={setActiveMenu}
+            onClose={() => setActiveMenu(null)}
+          >
             <MenuItem title="Open tasks" desc="Small, well-defined tasks to start now." href="/contribute/tasks" />
             <MenuItem title="Full design brief" desc="The complete technical & design plan." href="/contribute/spec" />
             <MenuItem title="Run it on your computer" desc="Clone & run locally (needs API key)." href="/contribute/run-locally" />
-          </Menu>
+          </DesktopPopover>
           <a href="/about" className="px-3 py-2 text-sm text-zinc-800 hover:text-zinc-900" title="The academic story, open-source ethos, and guardrails.">Why this exists</a>
         </nav>
+        {/* Mobile hamburger */}
+        <button
+          className="md:hidden inline-flex items-center justify-center w-10 h-10 rounded-md border border-zinc-300 text-zinc-700 hover:bg-white"
+          onClick={()=>setMobileOpen(o=>!o)}
+          aria-label="Toggle navigation menu"
+          aria-expanded={mobileOpen}
+        >
+          <span className="sr-only">Menu</span>
+          <div className="space-y-1.5">
+            <span className={`block h-0.5 w-5 bg-current transition-transform ${mobileOpen ? 'translate-y-1.5 rotate-45' : ''}`}></span>
+            <span className={`block h-0.5 w-5 bg-current transition-opacity ${mobileOpen ? 'opacity-0' : 'opacity-100'}`}></span>
+            <span className={`block h-0.5 w-5 bg-current transition-transform ${mobileOpen ? '-translate-y-1.5 -rotate-45' : ''}`}></span>
+          </div>
+        </button>
         <div className="flex items-center gap-3">
           <SplitCTA />
         </div>
       </div>
+      {mobileOpen && (
+        <div className="md:hidden border-t border-zinc-200 bg-white/95 backdrop-blur px-4 sm:px-6 py-4 space-y-4 animate-fadeIn">
+          <div>
+            <button
+              className="w-full flex items-center justify-between py-2 text-sm font-medium text-zinc-800"
+              onClick={()=>setMobileSections(s=>({...s, try:!s.try}))}
+              aria-expanded={mobileSections.try}
+            >
+              <span>Try the tool</span>
+              <ChevronDown className={`h-4 w-4 transition-transform ${mobileSections.try?'rotate-180':''}`} />
+            </button>
+            {mobileSections.try && (
+              <div className="pl-2 border-l border-zinc-200 space-y-1 mt-2">
+                <a href="/tool/development-management" className="block text-sm py-1.5 text-zinc-700 hover:text-zinc-900">Assess an application</a>
+                <a href="/tool/local-plan" className="block text-sm py-1.5 text-zinc-700 hover:text-zinc-900">Explore a local plan</a>
+              </div>
+            )}
+          </div>
+          <div>
+            <button
+              className="w-full flex items-center justify-between py-2 text-sm font-medium text-zinc-800"
+              onClick={()=>setMobileSections(s=>({...s, help:!s.help}))}
+              aria-expanded={mobileSections.help}
+            >
+              <span>Help build it</span>
+              <ChevronDown className={`h-4 w-4 transition-transform ${mobileSections.help?'rotate-180':''}`} />
+            </button>
+            {mobileSections.help && (
+              <div className="pl-2 border-l border-zinc-200 space-y-1 mt-2">
+                <a href="/contribute/tasks" className="block text-sm py-1.5 text-zinc-700 hover:text-zinc-900">Open tasks</a>
+                <a href="/contribute/spec" className="block text-sm py-1.5 text-zinc-700 hover:text-zinc-900">Full design brief</a>
+                <a href="/contribute/run-locally" className="block text-sm py-1.5 text-zinc-700 hover:text-zinc-900">Run it locally</a>
+              </div>
+            )}
+          </div>
+          <a href="/about" className="block text-sm py-1.5 text-zinc-700 hover:text-zinc-900">Why this exists</a>
+        </div>
+      )}
     </header>
   );
 }
@@ -132,7 +224,7 @@ function Header() {
 function Hero() {
   return (
     <section className="bg-zinc-50">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-16 lg:py-24 grid lg:grid-cols-2 gap-10 items-center">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-10 lg:py-16 grid lg:grid-cols-2 gap-10 items-center">
         <div>
           <h1 className="text-4xl/tight sm:text-5xl font-extrabold text-zinc-900">
             AI-assisted planning, from first idea to signed-off report.
@@ -142,7 +234,7 @@ function Hero() {
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <SplitCTA />
-            <a href="/contribute/tasks" className="inline-flex items-center gap-2 rounded-md border border-zinc-300 px-5 py-2.5 text-sm font-medium text-zinc-900 hover:bg-white">Help build it</a>
+            <a href="/contribute/tasks" className="inline-flex items-center gap-2 rounded-md border border-zinc-300 px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-white">Help build it</a>
           </div>
         </div>
         <div className="rounded-xl border border-zinc-200 bg-white shadow-sm p-6">
@@ -164,21 +256,21 @@ function Hero() {
 function Workflows() {
   return (
     <section className="bg-white">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-16 lg:py-24">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-10 lg:py-16">
         <h2 className="text-3xl sm:text-4xl font-bold text-zinc-900">Two big workflows</h2>
         <div className="mt-8 grid gap-6 md:grid-cols-2">
-          <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <div className="text-sm font-semibold text-zinc-900">Development Management</div>
-            <ul className="mt-3 space-y-2 text-zinc-700 text-sm">
+          <div className="rounded-xl border border-[#1C2C4C] bg-[#1C2C4C] p-6 shadow-sm text-white">
+            <div className="text-sm font-semibold text-white">Development Management</div>
+            <ul className="mt-3 space-y-2 text-white/90 text-sm">
               <li>• Upload plans, statements, and maps</li>
               <li>• Check heights, daylight, overlooking, parking, and more</li>
               <li>• See relevant policies and constraints — with clickable sources</li>
               <li>• Export a draft officer-style report you can edit</li>
             </ul>
           </div>
-          <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <div className="text-sm font-semibold text-zinc-900">Local Plan</div>
-            <ul className="mt-3 space-y-2 text-zinc-700 text-sm">
+          <div className="rounded-xl border border-[#1C2C4C] bg-[#1C2C4C] p-6 shadow-sm text-white">
+            <div className="text-sm font-semibold text-white">Local Plan</div>
+            <ul className="mt-3 space-y-2 text-white/90 text-sm">
               <li>• Import policies, evidence base, and site allocations</li>
               <li>• Map capacity, density, and constraints in one view</li>
               <li>• Spot policy gaps, overlaps, and conflicts</li>
@@ -200,7 +292,7 @@ function Differentiators() {
   ];
   return (
     <section className="bg-zinc-50">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-16 lg:py-24">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-10 lg:py-16">
         <h2 className="text-3xl sm:text-4xl font-bold text-zinc-900">What makes it different</h2>
         <div className="mt-8 grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           {items.map(({ title, desc, icon:Icon }) => (
@@ -227,13 +319,13 @@ function CapabilityCatalogue() {
   ];
   return (
     <section className="bg-white">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-16 lg:py-24">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-10 lg:py-16">
         <h2 className="text-3xl sm:text-4xl font-bold text-zinc-900">Built for real planning work</h2>
         <div className="mt-8 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {items.map(({ title, desc }) => (
-            <div key={title} className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-              <h3 className="text-lg font-semibold text-zinc-900">{title}</h3>
-              <p className="mt-2 text-zinc-600 text-sm">{desc}</p>
+            <div key={title} className="rounded-xl border border-[#1C2C4C] bg-[#1C2C4C] p-6 shadow-sm text-white">
+              <h3 className="text-lg font-semibold text-white">{title}</h3>
+              <p className="mt-2 text-white/80 text-sm">{desc}</p>
             </div>
           ))}
         </div>
@@ -251,11 +343,11 @@ function ComingSoon() {
   ];
   return (
     <section className="bg-zinc-50">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-16 lg:py-24">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-10 lg:py-16">
         <h2 className="text-3xl sm:text-4xl font-bold text-zinc-900">Coming soon</h2>
         <ul className="mt-6 grid md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm text-zinc-700">
           {items.map((t) => (
-            <li key={t} className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">{t}</li>
+            <li key={t} className="rounded-xl border border-[#1C2C4C] bg-[#1C2C4C] p-5 shadow-sm text-white">{t}</li>
           ))}
         </ul>
       </div>
@@ -266,7 +358,7 @@ function ComingSoon() {
 function CallToContribute() {
   return (
     <section className="bg-zinc-900 text-white">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-16 lg:py-20 grid lg:grid-cols-[1.2fr,0.8fr] gap-8 items-center">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-12 lg:py-16 grid lg:grid-cols-[1.2fr,0.8fr] gap-8 items-center">
         <div>
           <h2 className="text-3xl sm:text-4xl font-bold">Help build a planning tool the public can trust.</h2>
           <p className="mt-4 text-white/85 max-w-2xl">This is an academic project — not a commercial product. If you've got skills in planning, civic tech, geospatial analysis, or UI design, you can make a real impact here.</p>

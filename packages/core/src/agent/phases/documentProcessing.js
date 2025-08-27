@@ -19,7 +19,7 @@ export async function processDocumentsPhase(agent, documentFiles, assessment) {
       if (file instanceof ArrayBuffer) dataBuffer = file; else if (file.buffer instanceof ArrayBuffer) dataBuffer = file.buffer; else if (file.data instanceof ArrayBuffer) dataBuffer = file.data; else if (typeof file.arrayBuffer === 'function') dataBuffer = await file.arrayBuffer(); else throw new Error('Unsupported document input format');
       let parseResult;
       try {
-        parseResult = await agent.parser.parse(dataBuffer);
+  parseResult = await agent.parser.parse(dataBuffer, { enableOCR: !!(assessment?.options?.enableOCR) });
       } catch (parseErr) {
         const msg = String(parseErr && parseErr.message || parseErr);
         if (/Invalid PDF structure/i.test(msg)) {
@@ -38,6 +38,16 @@ export async function processDocumentsPhase(agent, documentFiles, assessment) {
       if ((!parseResult.chunks || !parseResult.chunks.length) && parseResult.text) {
         const rawChunks = agent.parser.chunk(parseResult.text, 1800, 250);
         parseResult.chunks = rawChunks.map((c, idx) => ({ id: `${file.name}-chunk-${idx}`, content: c, metadata: { source: file.name, index: idx } }));
+      }
+      // --- Normalise extractedData so downstream phases always have fullText & addresses ---
+      if (!parseResult.extractedData) parseResult.extractedData = {};
+      // Populate fullText (expected by address resolution phase) if absent
+      if (!parseResult.extractedData.fullText && parseResult.text) {
+        parseResult.extractedData.fullText = parseResult.text;
+      }
+      // Ensure addresses array available inside extractedData for consistency
+      if (!parseResult.extractedData.addresses && Array.isArray(parseResult.addresses)) {
+        parseResult.extractedData.addresses = parseResult.addresses;
       }
       // Embed chunks once (avoid duplicate push) - PARALLEL PROCESSING
   if (parseResult.chunks && parseResult.chunks.length && !parseResult.__embedded) {

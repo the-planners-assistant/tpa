@@ -15,7 +15,17 @@ export async function resolveAddressPhase(agent, documentResults, assessment) {
   }
   
   // Extract addresses from document text content using improved patterns
-  const textContent = documentResults.extractedData?.fullText || '';
+  let textContent = documentResults.extractedData?.fullText || '';
+  // Defensive fallback: if empty, attempt to reconstruct from processed documents
+  if (!textContent && Array.isArray(documentResults.processed)) {
+    try {
+      const concatenated = documentResults.processed
+        .map(p => p.extractedData?.fullText || '')
+        .filter(t => t && t.length > 0)
+        .join('\n\n');
+      if (concatenated.length > textContent.length) textContent = concatenated;
+    } catch (_) {}
+  }
   const extractedFromText = await extractAddressesFromText(agent, textContent, assessment);
   allAddresses.push(...extractedFromText);
   

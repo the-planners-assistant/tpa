@@ -111,7 +111,6 @@ function PlanningBalanceBox({ assessment, onOverride }) {
 
 export default function DevelopmentManagement() {
   const [agent, setAgent] = useState(null);
-  const [apiKey, setApiKey] = useState('');
   const [authority, setAuthority] = useState('');
   const [authorities, setAuthorities] = useState([]);
   const [authLoading, setAuthLoading] = useState(false);
@@ -130,9 +129,8 @@ export default function DevelopmentManagement() {
 
   useEffect(() => {
     // unified key name across app (tpa_google_api_key)
-    const stored = localStorage.getItem('tpa_google_api_key');
+    const stored = typeof window !== 'undefined' ? localStorage.getItem('tpa_google_api_key') : null;
     if (stored) {
-      setApiKey(stored);
       const a = new Agent({ googleApiKey: stored });
       setAgent(a);
     }
@@ -169,12 +167,6 @@ export default function DevelopmentManagement() {
       setAuthorities(list.sort((a,b)=>a.name.localeCompare(b.name)));
     } finally { setAuthLoading(false); }
   }
-
-  const saveApiKey = () => {
-    if (!apiKey || apiKey.trim().length < 10) return;
-    localStorage.setItem('tpa_google_api_key', apiKey.trim());
-    setAgent(new Agent({ googleApiKey: apiKey.trim() }));
-  };
 
   const considerations = [
     { name: 'Heritage', weight: 50 },
@@ -357,41 +349,13 @@ export default function DevelopmentManagement() {
           <div className="grid grid-cols-12 gap-8">
             {/* Left Sidebar - Controls */}
             <div className="col-span-4 space-y-6">
-              {/* API Key Section */}
-              <div className="bg-white/80 backdrop-blur-sm border border-zinc-200/60 rounded-xl shadow-sm p-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-2 h-2 rounded-full bg-red-500"></div>
-                  <h2 className="text-lg font-semibold text-zinc-900">1. API Configuration</h2>
-                </div>
-                <div className="space-y-3">
-                  <input 
-                    type="password" 
-                    placeholder="Google Gemini API Key" 
-                    value={apiKey} 
-                    onChange={e=>setApiKey(e.target.value)} 
-                    className="w-full px-4 py-3 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                  />
-                  <button 
-                    onClick={saveApiKey} 
-                    disabled={!apiKey || apiKey.length < 10}
-                    className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-black font-medium px-4 py-3 rounded-lg transition-colors"
-                  >
-                    Save Configuration
-                  </button>
-                  {agent && (
-                    <div className="flex items-center gap-2 text-sm text-emerald-600">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                      API key configured
-                    </div>
-                  )}
-                </div>
-              </div>
+              {/* (API Configuration removed; configure key via Settings page) */}
 
-              {/* Local Authority Section */}
+        {/* Local Authority Section */}
               <div className="bg-white/80 backdrop-blur-sm border border-zinc-200/60 rounded-xl shadow-sm p-6">
                 <div className="flex items-center gap-2 mb-4">
                   <div className={`w-2 h-2 rounded-full ${authority ? 'bg-emerald-500' : 'bg-amber-500'}`}></div>
-                  <h2 className="text-lg font-semibold text-zinc-900">2. Local Authority</h2>
+          <h2 className="text-lg font-semibold text-zinc-900">1. Local Authority</h2>
                 </div>
                 <div className="space-y-3">
                   <div className="flex gap-2">
@@ -423,11 +387,11 @@ export default function DevelopmentManagement() {
                 </div>
               </div>
 
-              {/* Documents Section */}
+        {/* Documents Section */}
               <div className="bg-white/80 backdrop-blur-sm border border-zinc-200/60 rounded-xl shadow-sm p-6">
                 <div className="flex items-center gap-2 mb-4">
                   <div className={`w-2 h-2 rounded-full ${files.length ? 'bg-emerald-500' : 'bg-zinc-400'}`}></div>
-                  <h2 className="text-lg font-semibold text-zinc-900">3. Planning Documents</h2>
+          <h2 className="text-lg font-semibold text-zinc-900">2. Planning Documents</h2>
                 </div>
                 <div className="space-y-4">
                   <div className="border-2 border-dashed border-zinc-300 rounded-lg p-6 text-center hover:border-zinc-400 transition-colors">
@@ -546,11 +510,11 @@ export default function DevelopmentManagement() {
                 </div>
               </div>
 
-              {/* PlanIt Search Section */}
+        {/* PlanIt Search Section */}
               <div className="bg-white/80 backdrop-blur-sm border border-zinc-200/60 rounded-xl shadow-sm p-6">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                  <h2 className="text-lg font-semibold text-zinc-900">4. Precedent Search</h2>
+          <h2 className="text-lg font-semibold text-zinc-900">3. Precedent Search</h2>
                 </div>
                 <form onSubmit={runPlanItSearch} className="space-y-3">
                   <input 

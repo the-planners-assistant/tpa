@@ -11,6 +11,8 @@ class Parser {
     this.geminiApiKey = null;
     this.addressRegex = /\b\d+[\w\s,.-]*(?:street|road|avenue|lane|drive|close|way|place|crescent|square|terrace|gardens|park|mews|court|row|hill|green|grove|rise|vale|view|walk|gate|field|end|side|yard|estate)\b/gi;
     this.postcodeRegex = /\b[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}\b/gi;
+  this.ocrEnabled = true; // can be toggled
+  this._tesseract = null; // lazy load reference
   }
 
   setGeminiApiKey(apiKey) {
@@ -217,6 +219,19 @@ class Parser {
       result.images.push(...pageData.images);
     }
 
+    // If text is suspiciously short and we have images, try OCR fallback
+    if (this.ocrEnabled && (!result.text || result.text.trim().length < 120) && result.images.length > 0 && options.enableOCR !== false) {
+      try {
+        const ocrText = await this.runOcrOnImages(result.images, options);
+        if (ocrText && ocrText.length > result.text.length) {
+          console.log(`OCR fallback recovered ${(ocrText.length - result.text.length)} extra characters`);
+          result.text = (result.text + '\n' + ocrText).trim();
+        }
+      } catch (ocrErr) {
+        console.warn('OCR fallback failed:', ocrErr.message);
+      }
+    }
+
   // Extract addresses from all text using heuristic parser
   result.addresses = this.extractAddresses(result.text);
 
@@ -365,6 +380,47 @@ class Parser {
     if (aspectRatio > 1.4 && aspectRatio < 1.6) return 'plan'; // Square-ish likely plans
     if (aspectRatio < 0.8) return 'section'; // Tall images likely sections
     return 'photo'; // Default to photo/rendering
+  }
+
+  /**
+   * Lazy-load Tesseract and perform OCR over extracted images (browser or Node with Canvas polyfill).
+   * Returns concatenated text.
+   */
+  async runOcrOnImages(images, options = {}) {
+    if (!images || images.length === 0) return '';
+    // Only attempt a limited number to control performance
+    const limit = options.ocrImageLimit || 5;
+    const subset = images.slice(0, limit);
+    if (!this._tesseract) {
+      try {
+        this._tesseract = await import('tesseract.js');
+      } catch (e) {
+        console.warn('Tesseract.js not available for OCR:', e.message);
+        return '';
+      }
+    }
+    const { createWorker } = this._tesseract; // v5 API compatibility
+    const worker = await createWorker?.({ logger: m => { if (options.ocrDebug) console.log('OCR', m); } });
+    if (!worker) return '';
+    try {
+      await worker.loadLanguage('eng');
+      await worker.initialize('eng');
+      let combined = '';
+      for (const img of subset) {
+        if (!img.base64) continue;
+        try {
+          const { data } = await worker.recognize(`data:image/png;base64,${img.base64}`);
+            if (data && data.text) {
+              combined += '\n' + data.text.trim();
+            }
+        } catch (err) {
+          if (options.ocrDebug) console.warn('Image OCR failed:', err.message);
+        }
+      }
+      return combined.trim();
+    } finally {
+      try { await worker.terminate(); } catch(_) {}
+    }
   }
 
   /**
