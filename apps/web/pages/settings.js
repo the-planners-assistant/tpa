@@ -4,23 +4,23 @@ const SettingsPage = () => {
   const [apiKey, setApiKey] = useState('');
 
   useEffect(() => {
-    const storedApiKey = localStorage.getItem('gemini_api_key');
+    const storedApiKey = localStorage.getItem('tpa_google_api_key');
     if (storedApiKey) {
       setApiKey(storedApiKey);
     }
   }, []);
 
   const handleSave = () => {
-    // Save the API key to local storage or a secure place
-    localStorage.setItem('gemini_api_key', apiKey);
-    alert('API key saved!');
+    localStorage.setItem('tpa_google_api_key', apiKey.trim());
+    // Optionally dispatch a custom event so other tabs/pages can react
+    window.dispatchEvent(new CustomEvent('tpa_api_key_updated', { detail: { apiKey: apiKey.trim() } }));
   };
 
   return (
     <div className="p-8">
       <h1 className="text-h1 font-h1 mb-8">Settings</h1>
       <div className="mb-4">
-        <label htmlFor="api-key" className="block text-sm font-medium text-gray-700">Gemini API Key</label>
+  <label htmlFor="api-key" className="block text-sm font-medium text-gray-700">Google / Gemini API Key</label>
         <input
           type="text"
           id="api-key"
@@ -31,7 +31,7 @@ const SettingsPage = () => {
         />
       </div>
       <button onClick={handleSave} className="bg-accent text-white font-bold py-2 px-4 rounded">
-        Save
+        Save Key
       </button>
     </div>
   );

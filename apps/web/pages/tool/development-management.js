@@ -1,19 +1,34 @@
 import Head from 'next/head';
 import { useEffect, useState } from 'react';
-import BalanceWidget from '@tpa/ui/src/components/BalanceWidget';
 import ExportButton from '@tpa/ui/src/components/ExportButton';
 import Agent from '@tpa/core/src/agent.js';
+import { ProcessingProgressBar } from '@tpa/ui/src/components/ProcessingProgressBar.js';
+import { PlanningBalancePanel } from '@tpa/ui/src/components/PlanningBalancePanel.js';
+import { assessmentStore } from '@tpa/ui/src/components/assessmentStore.js';
 
 export default function DevelopmentManagement() {
   const [agent, setAgent] = useState(null);
-  const [query, setQuery] = useState('');
-  const [response, setResponse] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [authority, setAuthority] = useState('');
+  const [files, setFiles] = useState([]);
+  const [assessment, setAssessment] = useState(null);
+  const [draft, setDraft] = useState('');
+  const [processing, setProcessing] = useState(false);
 
   useEffect(() => {
-    const apiKey = localStorage.getItem('gemini_api_key');
-    setAgent(new Agent(apiKey));
+    // unified key name across app (tpa_google_api_key)
+    const stored = localStorage.getItem('tpa_google_api_key');
+    if (stored) {
+      setApiKey(stored);
+      setAgent(new Agent({ googleApiKey: stored }));
+    }
   }, []);
+
+  const saveApiKey = () => {
+    if (!apiKey || apiKey.trim().length < 10) return;
+    localStorage.setItem('tpa_google_api_key', apiKey.trim());
+    setAgent(new Agent({ googleApiKey: apiKey.trim() }));
+  };
 
   const considerations = [
     { name: 'Heritage', weight: 50 },
@@ -26,27 +41,43 @@ export default function DevelopmentManagement() {
     console.log(`Consideration '${name}' weight changed to: ${value}`);
   };
 
-  const handleQuery = async () => {
-    if (agent) {
-      setLoading(true);
-      const res = await agent.run(query);
-      setResponse(res);
-      setLoading(false);
+  function updatePhase(id, progress, status){
+    if (status) assessmentStore.setPhaseStatus(id, status);
+    if (progress != null) assessmentStore.setPhaseProgress(id, progress);
+    if (progress === 1) assessmentStore.completePhase(id);
+  }
+
+  async function startAssessment(){
+    if (!agent || files.length===0) return;
+    setProcessing(true);
+    updatePhase('ingest', 0.1, 'running');
+    try {
+      // Convert files to objects with ArrayBuffer for parser
+      const fileObjs = await Promise.all(files.map(async f => ({ name: f.name, buffer: await f.arrayBuffer(), original: f })));
+      updatePhase('ingest', 1);
+      updatePhase('embed', 0.05, 'running');
+      // Call assess with adapted shape; agent.processDocuments will handle .buffer
+      const assessmentResult = await agent.assessPlanningApplication(fileObjs);
+      setAssessment(assessmentResult);
+      setDraft(JSON.stringify(assessmentResult.results.report || {}, null, 2));
+      assessmentStore.completePhase('embed');
+      assessmentStore.completePhase('synthesis');
+      assessmentStore.completePhase('balance');
+    } catch (e) {
+      console.error(e);
+      assessmentStore.updatePhase('ingest', { status: 'error' });
+    } finally {
+      setProcessing(false);
     }
-  };
+  }
 
   const handleFileUpload = (event) => {
-    const file = event.target.files[0];
-    if (file && agent) {
-      agent.loadPdf(file);
-    }
+    const selected = Array.from(event.target.files || []);
+    if (selected.length === 0) return;
+    setFiles(prev => [...prev, ...selected]);
   };
 
-  const draftReport = `
-# Draft Officer Report
-
-${response}
-`;
+  const draftReport = `# Draft Officer Report\n\n${draft}`;
 
   return (
     <div>
@@ -57,43 +88,45 @@ ${response}
       </Head>
 
       <main className="p-8">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-h1 font-h1">
-            Development Management Assessment
-          </h1>
-          <ExportButton content={draftReport} fileName="draft-report" />
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-6">
+            <h1 className="text-2xl font-bold tracking-tight text-zinc-900">Development Management Assessment</h1>
+            {draft && <ExportButton content={draftReport} fileName="draft-officer-report" />}
+          </div>
+          <div className="w-1/2"><ProcessingProgressBar /></div>
         </div>
-        <div className="grid grid-cols-2 gap-8">
-          <div>
-            <h2 className="text-h2 font-h2 mb-4">Upload PDF</h2>
-            <input type="file" onChange={handleFileUpload} className="mb-4" />
-            <h2 className="text-h2 font-h2 mb-4">Query</h2>
-            <div className="flex items-center mb-4">
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-accent focus:border-accent sm:text-sm"
-                placeholder="Ask about the application..."
-              />
-              <button onClick={handleQuery} className="ml-4 bg-accent text-white font-bold py-2 px-4 rounded">
-                {loading ? (
-                  <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                ) : (
-                  'Run'
-                )}
+        <div className="grid grid-cols-12 gap-8 items-start">
+          <div className="col-span-4 space-y-6">
+            <div className="p-4 bg-white border rounded-lg shadow-sm space-y-3">
+              <h2 className="text-sm font-semibold tracking-wide text-zinc-800">1. API Key</h2>
+              <input type="password" placeholder="Google / Gemini API Key" value={apiKey} onChange={e=>setApiKey(e.target.value)} className="w-full px-2 py-1 border rounded" />
+              <button onClick={saveApiKey} className="text-xs bg-amber-500 text-black px-3 py-1 rounded font-medium">Save Key</button>
+            </div>
+            <div className="p-4 bg-white border rounded-lg shadow-sm space-y-3">
+              <h2 className="text-sm font-semibold tracking-wide text-zinc-800">2. Local Authority</h2>
+              <select value={authority} onChange={e=>setAuthority(e.target.value)} className="w-full border rounded px-2 py-1 text-sm">
+                <option value="">Select authority...</option>
+                <option value="camden">Camden</option>
+                <option value="bristol">Bristol</option>
+                <option value="leeds">Leeds</option>
+              </select>
+            </div>
+            <div className="p-4 bg-white border rounded-lg shadow-sm space-y-3">
+              <h2 className="text-sm font-semibold tracking-wide text-zinc-800">3. Documents</h2>
+              <input type="file" multiple onChange={handleFileUpload} className="w-full" />
+              <ul className="text-xs max-h-40 overflow-auto space-y-1">
+                {files.map(f => <li key={f.name} className="truncate">{f.name}</li>)}
+              </ul>
+              <button disabled={!files.length || processing} onClick={startAssessment} className="text-xs bg-emerald-600 disabled:opacity-50 text-white px-3 py-1 rounded font-medium">
+                {processing ? 'Running...' : 'Start Assessment'}
               </button>
             </div>
-            <h2 className="text-h2 font-h2 mb-4">Response</h2>
-            <div className="p-4 border rounded-lg bg-white shadow-sm prose">
-              {response || "Upload documents and ask a question to get started."}
-            </div>
+            <PlanningBalancePanel onWeightsChange={() => { /* TODO recompute balance */ }} />
           </div>
-          <div>
-            <BalanceWidget considerations={considerations} onWeightChange={handleWeightChange} />
+          <div className="col-span-8">
+            <div className="p-4 bg-white border rounded-lg shadow-sm min-h-[400px] prose whitespace-pre-wrap text-xs">
+              {draft ? draft : <div className="text-zinc-500 text-sm">Upload documents, select an authority and run an assessment to see the draft report.</div>}
+            </div>
           </div>
         </div>
       </main>

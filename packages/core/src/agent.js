@@ -68,9 +68,15 @@ class Agent {
     
     // Configure components with API keys
     if (this.config.googleApiKey) {
-      this.spatialAnalyzer.setGoogleApiKey(this.config.googleApiKey);
+      // Correct method name on SpatialAnalyzer
+      if (typeof this.spatialAnalyzer.setGoogleMapsApiKey === 'function') {
+        this.spatialAnalyzer.setGoogleMapsApiKey(this.config.googleApiKey);
+      }
       this.addressExtractor.setGoogleApiKey(this.config.googleApiKey);
-      this.parser.setGeminiClient(this.visionModel);
+      // Provide raw API key to parser for optional per-image analysis
+      if (typeof this.parser.setGeminiApiKey === 'function') {
+        this.parser.setGeminiApiKey(this.config.googleApiKey);
+      }
     }
     
     // Orchestration state
@@ -347,8 +353,21 @@ class Agent {
           'document_processing',
           `Processing document: ${file.name}`
         );
+        // Support multiple input shapes: File, {buffer}, {data}, ArrayBuffer
+        let dataBuffer = null;
+        if (file instanceof ArrayBuffer) {
+          dataBuffer = file;
+        } else if (file.buffer instanceof ArrayBuffer) {
+          dataBuffer = file.buffer;
+        } else if (file.data instanceof ArrayBuffer) {
+          dataBuffer = file.data;
+        } else if (typeof file.arrayBuffer === 'function') {
+          dataBuffer = await file.arrayBuffer();
+        } else {
+          throw new Error('Unsupported document input format');
+        }
 
-        const parseResult = await this.parser.parse(file);
+        const parseResult = await this.parser.parse(dataBuffer);
         
         results.processed.push({
           filename: file.name,
