@@ -35,6 +35,24 @@ class Database extends Dexie {
       planitPolicies: '++id, policyId, authority, reference, category'
     });
 
+    // Version 3: Separate persistent vector stores (government vs applicant)
+    // We keep metadata lightweight for indexing; embeddings stored as JS arrays (not indexed)
+    this.version(3).stores({
+      govVectors: '++id, source, authority, reference',
+      applicantVectors: '++id, source, applicationRef'
+    });
+
+    // Version 4: Local Plan Management tables
+    this.version(4).stores({
+      localPlans: '++id, name, authorityCode, adoptionDate, status, version, documentIds, createdAt, updatedAt',
+      localPlanPolicies: '++id, planId, policyRef, title, category, content, evidenceIds, parentPolicy, [planId+policyRef]',
+      siteAllocations: '++id, planId, siteRef, name, geometry, capacity, constraints, policyIds, status',
+      evidenceBase: '++id, planId, category, title, documentPath, linkedPolicyIds, uploadDate, fileType',
+      policyReferences: '++id, sourcePolicy, targetPolicy, relationship, strength, context, createdAt',
+      scenarios: '++id, planId, name, description, parameters, results, createdAt, updatedAt',
+      complianceChecks: '++id, applicationId, policyId, status, score, notes, checkedAt, assessorId'
+    });
+
     this.documents = this.table('documents');
     this.chunks = this.table('chunks');
     this.policies = this.table('policies');
@@ -48,12 +66,30 @@ class Database extends Dexie {
     this.localAuthorityData = this.table('localAuthorityData');
     this.extractedImages = this.table('extractedImages');
     this.visualAnalysis = this.table('visualAnalysis');
+    
+    // Local Plan Management tables (v4)
+    if (this.tables.find(t => t.name === 'localPlans')) {
+      this.localPlans = this.table('localPlans');
+      this.localPlanPolicies = this.table('localPlanPolicies');
+      this.siteAllocations = this.table('siteAllocations');
+      this.evidenceBase = this.table('evidenceBase');
+      this.policyReferences = this.table('policyReferences');
+      this.scenarios = this.table('scenarios');
+      this.complianceChecks = this.table('complianceChecks');
+    }
+    
     // Optional PlanIt tables (v2)
     if (this.tables.find(t => t.name === 'planitApplications')) {
       this.planitApplications = this.table('planitApplications');
     }
     if (this.tables.find(t => t.name === 'planitPolicies')) {
       this.planitPolicies = this.table('planitPolicies');
+    }
+    if (this.tables.find(t => t.name === 'govVectors')) {
+      this.govVectors = this.table('govVectors');
+    }
+    if (this.tables.find(t => t.name === 'applicantVectors')) {
+      this.applicantVectors = this.table('applicantVectors');
     }
   }
 
@@ -225,6 +261,62 @@ class Database extends Dexie {
 
     return similarities
       .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, limit);
+  }
+
+  // --- Dual Vector Store Methods ---
+  async addGovernmentVectors(chunks=[]) {
+    if (!this.govVectors || !chunks.length) return 0;
+    const rows = chunks.map(c => ({
+      source: c.metadata?.source || c.metadata?.file || 'unknown',
+      authority: c.metadata?.authority || c.metadata?.localAuthority || c.metadata?.lpa || null,
+      reference: c.metadata?.reference || c.metadata?.policyRef || null,
+      content: c.content,
+      embedding: c.embedding,
+      metadata: c.metadata || {},
+      role: 'government'
+    }));
+    await this.govVectors.bulkAdd(rows);
+    return rows.length;
+  }
+
+  async addApplicantVectors(chunks=[]) {
+    if (!this.applicantVectors || !chunks.length) return 0;
+    const rows = chunks.map(c => ({
+      source: c.metadata?.source || c.metadata?.file || 'unknown',
+      applicationRef: c.metadata?.applicationRef || c.metadata?.reference || null,
+      content: c.content,
+      embedding: c.embedding,
+      metadata: c.metadata || {},
+      role: 'applicant'
+    }));
+    await this.applicantVectors.bulkAdd(rows);
+    return rows.length;
+  }
+
+  async searchGovernmentVectors(queryEmbedding, { limit=12, threshold=0.5 }={}) {
+    if (!this.govVectors) return [];
+    const items = await this.govVectors.toArray();
+    return items.map(it => ({
+      content: it.content,
+      similarity: this.cosineSimilarity(queryEmbedding, it.embedding||[]),
+      metadata: it.metadata || {},
+      role: 'government'
+    })).filter(r => !Number.isNaN(r.similarity) && r.similarity >= threshold)
+      .sort((a,b)=>b.similarity-a.similarity)
+      .slice(0, limit);
+  }
+
+  async searchApplicantVectors(queryEmbedding, { limit=12, threshold=0.5 }={}) {
+    if (!this.applicantVectors) return [];
+    const items = await this.applicantVectors.toArray();
+    return items.map(it => ({
+      content: it.content,
+      similarity: this.cosineSimilarity(queryEmbedding, it.embedding||[]),
+      metadata: it.metadata || {},
+      role: 'applicant'
+    })).filter(r => !Number.isNaN(r.similarity) && r.similarity >= threshold)
+      .sort((a,b)=>b.similarity-a.similarity)
       .slice(0, limit);
   }
 

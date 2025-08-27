@@ -21,7 +21,13 @@ const Layout = ({ children }) => {
                 href="/tool/development-management" 
                 className="text-sm font-medium text-slate-600 hover:text-slate-900 px-3 py-2 rounded-md hover:bg-slate-100 transition-colors"
               >
-                Development Tool
+                Development Management
+              </Link>
+              <Link 
+                href="/tool/local-plan" 
+                className="text-sm font-medium text-slate-600 hover:text-slate-900 px-3 py-2 rounded-md hover:bg-slate-100 transition-colors"
+              >
+                Local Plan
               </Link>
               <Link 
                 href="/settings" 

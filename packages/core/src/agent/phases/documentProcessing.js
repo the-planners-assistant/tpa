@@ -57,13 +57,20 @@ export async function processDocumentsPhase(agent, documentFiles, assessment) {
         const embeddedChunks = await Promise.all(embeddingPromises);
         const good = embeddedChunks.filter(chunk => chunk.embedding !== null);
         results.chunks.push(...good);
-        // Populate role-specific vector stores
+        // Populate role-specific vector stores (in-memory + persistent dual DB tables)
         if (!agent.vectorStore) agent.vectorStore = [];
         agent.vectorStore.push(...good.map(c=>({ text: c.content, embedding: c.embedding, metadata: c.metadata })));
         if (role === 'application') {
           agent.vectorStoreApplication.push(...good.map(c=>({ text: c.content, embedding: c.embedding, metadata: c.metadata })));
+          // Persist to applicant vector table if available
+          if (agent.database && typeof agent.database.addApplicantVectors === 'function') {
+            agent.database.addApplicantVectors(good).catch(e=>console.warn('Persist applicant vectors failed', e.message));
+          }
         } else if (role === 'policy') {
           agent.vectorStorePolicy.push(...good.map(c=>({ text: c.content, embedding: c.embedding, metadata: c.metadata })));
+          if (agent.database && typeof agent.database.addGovernmentVectors === 'function') {
+            agent.database.addGovernmentVectors(good).catch(e=>console.warn('Persist government vectors failed', e.message));
+          }
         }
         parseResult.__embedded = true;
       }

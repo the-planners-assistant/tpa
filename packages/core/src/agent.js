@@ -868,14 +868,35 @@ Provide a structured assessment including:
       const store = category === 'application' ? this.vectorStoreApplication : this.vectorStorePolicy;
       if (!store || store.length === 0) return [];
       const queryEmbedding = await this.embedder.embed(query.slice(0, 5000));
-      const scored = store.map(item => ({
+      // Merge in persistent vectors (dual DB) if available
+      let persistent = [];
+      try {
+        if (this.database) {
+          if (category === 'policy' && typeof this.database.searchGovernmentVectors === 'function') {
+            persistent = await this.database.searchGovernmentVectors(queryEmbedding, { limit: 18, threshold: 0.45 });
+          } else if (category === 'application' && typeof this.database.searchApplicantVectors === 'function') {
+            persistent = await this.database.searchApplicantVectors(queryEmbedding, { limit: 18, threshold: 0.45 });
+          }
+        }
+      } catch (e) {
+        console.warn('Persistent vector search failed', e.message);
+      }
+      const mem = store.map(item => ({
         content: item.text,
         similarity: this.cosineSimilarity(queryEmbedding, item.embedding || []),
         metadata: item.metadata || {},
         role: category
       })).filter(r => !Number.isNaN(r.similarity));
-      scored.sort((a,b)=>b.similarity-a.similarity);
-      return scored.slice(0, 12); // return richer objects
+      const combined = [...mem, ...persistent];
+      // De-duplicate by content hash (simple length+first40 heuristic)
+      const seen = new Set();
+      const deduped = [];
+      for (const r of combined) {
+        const key = r.content.length + ':' + r.content.slice(0,40);
+        if (!seen.has(key)) { seen.add(key); deduped.push(r); }
+      }
+      deduped.sort((a,b)=>b.similarity-a.similarity);
+      return deduped.slice(0, 24); // richer objects, expanded limit due to fusion
     }
     if (!this.vectorStore || this.vectorStore.length === 0) return [];
     const queryEmbedding = await this.embedder.embed(query.slice(0, 5000));
