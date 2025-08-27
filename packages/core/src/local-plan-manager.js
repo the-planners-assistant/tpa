@@ -1,5 +1,7 @@
 import { getDatabase } from './database.js';
+import { policyEmbeddingService } from './policy-embedding-service.js';
 
+/**
 /**
  * LocalPlanManager
  * Manages local plan documents, policies, site allocations, and evidence base
@@ -102,7 +104,7 @@ export default class LocalPlanManager {
   }
 
   /**
-   * Add policy to local plan
+   * Add policy to local plan with semantic embeddings
    */
   async addPolicy(planId, policyData) {
     const {
@@ -110,6 +112,8 @@ export default class LocalPlanManager {
       title,
       category,
       content,
+      requirements = [],
+      crossReferences = [],
       evidenceIds = [],
       parentPolicy = null
     } = policyData;
@@ -120,13 +124,41 @@ export default class LocalPlanManager {
       title,
       category,
       content,
+      requirements,
+      crossReferences,
       evidenceIds,
       parentPolicy,
       createdAt: new Date().toISOString()
     };
 
-    const id = await this.db.localPlanPolicies.add(policy);
-    return { ...policy, id };
+    // Generate embeddings for semantic search
+    try {
+      console.log(`Generating embeddings for policy ${policyRef}...`);
+      const embeddings = await policyEmbeddingService.generatePolicyEmbeddings(policyData);
+      policy.embeddings = embeddings;
+      
+      // Add policy to database
+      const policyId = await this.db.localPlanPolicies.add(policy);
+      
+      // Store individual embedding chunks for advanced search
+      for (const embedding of embeddings) {
+        await this.db.policyEmbeddings.add({
+          policyId,
+          ...embedding,
+          createdAt: new Date().toISOString()
+        });
+      }
+      
+      console.log(`✅ Policy ${policyRef} added with ${embeddings.length} embedding chunks`);
+      return { ...policy, id: policyId };
+      
+    } catch (error) {
+      console.warn(`Failed to generate embeddings for policy ${policyRef}:`, error);
+      
+      // Still add the policy without embeddings
+      const policyId = await this.db.localPlanPolicies.add(policy);
+      return { ...policy, id: policyId };
+    }
   }
 
   /**
@@ -304,5 +336,87 @@ export default class LocalPlanManager {
       categories,
       totalCapacity: allocations.reduce((sum, alloc) => sum + (alloc.capacity || 0), 0)
     };
+  }
+
+  /**
+   * Search policies semantically using embeddings
+   */
+  async searchPoliciesSemantics(planId, queryText, options = {}) {
+    const { topK = 5, categories = null, includeContent = true } = options;
+    
+    try {
+      // Get all policies for the plan
+      let policies = await this.db.localPlanPolicies.where('planId').equals(planId).toArray();
+      
+      // Filter by categories if specified
+      if (categories && categories.length > 0) {
+        policies = policies.filter(policy => categories.includes(policy.category));
+      }
+      
+      // Use semantic search if embeddings available
+      if (policies.some(p => p.embeddings && p.embeddings.length > 0)) {
+        const results = await policyEmbeddingService.searchPolicies(queryText, policies, topK);
+        
+        return results.map(result => ({
+          policy: includeContent ? result.policy : {
+            id: result.policy.id,
+            policyRef: result.policy.policyRef,
+            title: result.policy.title,
+            category: result.policy.category
+          },
+          similarity: result.similarity,
+          matchingChunk: result.matchingChunk.chunk,
+          chunkType: result.matchingChunk.chunkType
+        }));
+      } else {
+        // Fallback to text search
+        const lowercaseQuery = queryText.toLowerCase();
+        const textResults = policies
+          .filter(policy => 
+            policy.title.toLowerCase().includes(lowercaseQuery) ||
+            policy.content.toLowerCase().includes(lowercaseQuery) ||
+            policy.policyRef.toLowerCase().includes(lowercaseQuery)
+          )
+          .slice(0, topK)
+          .map(policy => ({
+            policy: includeContent ? policy : {
+              id: policy.id,
+              policyRef: policy.policyRef,
+              title: policy.title,
+              category: policy.category
+            },
+            similarity: 0.5, // Default similarity for text search
+            matchingChunk: policy.title,
+            chunkType: 'text_search'
+          }));
+          
+        return textResults;
+      }
+    } catch (error) {
+      console.error('Policy search failed:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get policy recommendations based on content similarity
+   */
+  async getRelatedPolicies(policyId, topK = 3) {
+    try {
+      const policy = await this.db.localPlanPolicies.get(policyId);
+      if (!policy) return [];
+      
+      // Use the policy content as search query
+      const searchQuery = `${policy.title} ${policy.content}`.substring(0, 500);
+      const results = await this.searchPoliciesSemantics(policy.planId, searchQuery, { topK: topK + 1 });
+      
+      // Filter out the original policy and return related ones
+      return results
+        .filter(result => result.policy.id !== policyId)
+        .slice(0, topK);
+    } catch (error) {
+      console.error('Failed to get related policies:', error);
+      return [];
+    }
   }
 }

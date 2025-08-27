@@ -10,6 +10,7 @@ import AddressExtractor from './address-extractor.js';
 import PlanningDataAPI from './planning-data-api.js';
 import PlanItAPI from './planit-api.js';
 import LocalAuthorityManager from './local-authority-manager.js';
+import LocalPlanManager from './local-plan-manager.js';
 import ImageRetriever from './image-retriever.js';
 // Phase modules
 import { processDocumentsPhase } from './agent/phases/documentProcessing.js';
@@ -82,9 +83,10 @@ class Agent {
     this.evidenceEngine = new EvidenceEngine(this.database, this.spatialAnalyzer);
     this.addressExtractor = new AddressExtractor();
     this.planningDataAPI = new PlanningDataAPI();
-  this.planItAPI = new PlanItAPI();
-  this.localAuthorities = new LocalAuthorityManager(this.database, this.planItAPI);
-  this.imageRetriever = new ImageRetriever();
+    this.planItAPI = new PlanItAPI();
+    this.localAuthorities = new LocalAuthorityManager(this.database, this.planItAPI);
+    this.localPlanManager = new LocalPlanManager(this.database);
+    this.imageRetriever = new ImageRetriever();
     
     // Configure components with API keys
     if (this.config.googleApiKey) {
@@ -1955,6 +1957,173 @@ Respond in JSON format:
     sanitized.storageVersion = '1.0';
     
     return sanitized;
+  }
+
+  /**
+   * Retrieve relevant local plan policies for assessment
+   * Enhanced for Phase 3: Development Management Integration
+   */
+  async retrieveRelevantPolicies(assessmentData, options = {}) {
+    const { topK = 10, categories = null, authorityCode = null } = options;
+    
+    try {
+      // Extract key information for policy search
+      const searchTerms = this._extractPolicySearchTerms(assessmentData);
+      const searchQuery = searchTerms.join(' ');
+      
+      console.log(`🔍 Searching for policies: "${searchQuery}"`);
+      
+      // Find relevant local plans
+      let localPlans = await this.localPlanManager.listLocalPlans();
+      
+      // Filter by authority if specified
+      if (authorityCode) {
+        localPlans = localPlans.filter(plan => plan.authorityCode === authorityCode);
+      }
+      
+      // Search policies across all relevant plans
+      const policyResults = [];
+      
+      for (const plan of localPlans) {
+        try {
+          const planPolicies = await this.localPlanManager.searchPoliciesSemantics(
+            plan.id, 
+            searchQuery, 
+            { topK: Math.ceil(topK / localPlans.length), categories }
+          );
+          
+          // Add plan context to results
+          const enrichedPolicies = planPolicies.map(result => ({
+            ...result,
+            planContext: {
+              planId: plan.id,
+              planName: plan.name,
+              authority: plan.authorityCode,
+              adoptionDate: plan.adoptionDate,
+              status: plan.status
+            }
+          }));
+          
+          policyResults.push(...enrichedPolicies);
+        } catch (error) {
+          console.warn(`Failed to search policies in plan ${plan.name}:`, error);
+        }
+      }
+      
+      // Sort by similarity and return top results
+      const sortedResults = policyResults
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, topK);
+      
+      console.log(`✅ Found ${sortedResults.length} relevant policies`);
+      
+      return {
+        policies: sortedResults,
+        searchQuery,
+        searchTerms,
+        metadata: {
+          totalPlansSearched: localPlans.length,
+          categoriesSearched: categories || 'all',
+          timestamp: new Date().toISOString()
+        }
+      };
+      
+    } catch (error) {
+      console.error('Policy retrieval failed:', error);
+      return {
+        policies: [],
+        searchQuery: '',
+        searchTerms: [],
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Extract search terms from assessment data for policy retrieval
+   */
+  _extractPolicySearchTerms(assessmentData) {
+    const terms = [];
+    
+    // Extract from description
+    if (assessmentData.description) {
+      const description = assessmentData.description.toLowerCase();
+      
+      // Development types
+      const devTypes = ['residential', 'commercial', 'industrial', 'retail', 'office', 'mixed use', 'housing'];
+      devTypes.forEach(type => {
+        if (description.includes(type)) terms.push(type);
+      });
+      
+      // Key planning concepts
+      const concepts = ['development', 'extension', 'conversion', 'change of use', 'demolition', 'new build'];
+      concepts.forEach(concept => {
+        if (description.includes(concept)) terms.push(concept);
+      });
+    }
+    
+    // Extract from spatial analysis
+    if (assessmentData.spatial) {
+      if (assessmentData.spatial.constraints) {
+        assessmentData.spatial.constraints.forEach(constraint => {
+          terms.push(constraint.type.toLowerCase());
+        });
+      }
+      
+      if (assessmentData.spatial.designations) {
+        assessmentData.spatial.designations.forEach(designation => {
+          terms.push(designation.toLowerCase());
+        });
+      }
+    }
+    
+    // Extract from material considerations
+    if (assessmentData.materialConsiderations) {
+      assessmentData.materialConsiderations.forEach(consideration => {
+        if (consideration.category) {
+          terms.push(consideration.category.toLowerCase());
+        }
+      });
+    }
+    
+    // Unique terms only
+    return [...new Set(terms)];
+  }
+
+  /**
+   * Integrate policy retrieval into assessment workflow
+   */
+  async enhanceAssessmentWithPolicies(assessmentData) {
+    try {
+      // Get relevant policies
+      const policyResults = await this.retrieveRelevantPolicies(assessmentData, {
+        topK: 15,
+        authorityCode: assessmentData.spatial?.authority
+      });
+      
+      // Format policies for AI analysis
+      const policyContext = policyResults.policies.map(result => ({
+        policyRef: result.policy.policyRef,
+        title: result.policy.title,
+        category: result.policy.category,
+        relevantContent: result.matchingChunk,
+        similarity: result.similarity,
+        planName: result.planContext.planName,
+        authority: result.planContext.authority
+      }));
+      
+      // Add to assessment data
+      assessmentData.relevantPolicies = policyContext;
+      assessmentData.policySearchMetadata = policyResults.metadata;
+      
+      return assessmentData;
+      
+    } catch (error) {
+      console.error('Failed to enhance assessment with policies:', error);
+      assessmentData.relevantPolicies = [];
+      assessmentData.policyError = error.message;
+      return assessmentData;
+    }
   }
 }
 

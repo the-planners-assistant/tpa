@@ -410,11 +410,11 @@ export default class PolicyParser {
           reference: reference.trim(),
           title: title,
           content: fullContent,
+          requirements: this._extractRequirements(fullContent),
+          crossReferences: this._extractCrossReferences(fullContent),
           section: 'EXTRACTED',
           sectionTitle: 'Direct Extraction',
           category: this._categorizePolicy(fullContent),
-          requirements: this._extractRequirements(fullContent),
-          crossReferences: this._extractCrossReferences(fullContent),
           extractedAt: new Date().toISOString()
         });
       }

@@ -53,6 +53,18 @@ class Database extends Dexie {
       complianceChecks: '++id, applicationId, policyId, status, score, notes, checkedAt, assessorId'
     });
 
+    // Version 5: Enhanced semantic search with embeddings
+    this.version(5).stores({
+      localPlans: '++id, name, authorityCode, adoptionDate, status, version, documentIds, createdAt, updatedAt',
+      localPlanPolicies: '++id, planId, policyRef, title, category, content, embeddings, requirements, crossReferences, evidenceIds, parentPolicy, [planId+policyRef]',
+      siteAllocations: '++id, planId, siteRef, name, geometry, capacity, constraints, policyIds, status',
+      evidenceBase: '++id, planId, category, title, documentPath, linkedPolicyIds, uploadDate, fileType',
+      policyReferences: '++id, sourcePolicy, targetPolicy, relationship, strength, context, createdAt',
+      scenarios: '++id, planId, name, description, parameters, results, createdAt, updatedAt',
+      complianceChecks: '++id, applicationId, policyId, status, score, notes, checkedAt, assessorId',
+      policyEmbeddings: '++id, policyId, chunk, embedding, chunkIndex, metadata'
+    });
+
     this.documents = this.table('documents');
     this.chunks = this.table('chunks');
     this.policies = this.table('policies');
@@ -76,6 +88,7 @@ class Database extends Dexie {
       this.policyReferences = this.table('policyReferences');
       this.scenarios = this.table('scenarios');
       this.complianceChecks = this.table('complianceChecks');
+      this.policyEmbeddings = this.table('policyEmbeddings');
     }
     
     // Optional PlanIt tables (v2)
