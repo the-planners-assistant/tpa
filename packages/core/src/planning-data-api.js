@@ -10,6 +10,20 @@ class PlanningDataAPI {
   }
 
   /**
+   * Initialize hook for consistency with other services.
+   * Currently warms dataset list cache; safe to call multiple times.
+   */
+  async initialize() {
+    try {
+      await this.getDatasets();
+      return true;
+    } catch (e) {
+      // Non-fatal
+      return false;
+    }
+  }
+
+  /**
    * Get available datasets from planning.data.gov.uk
    */
   async getDatasets() {

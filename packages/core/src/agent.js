@@ -104,7 +104,9 @@ class Agent {
     try {
       await this.database.initialize();
       await this.materialConsiderations.initialize();
-      await this.planningDataAPI.initialize();
+      if (this.planningDataAPI && typeof this.planningDataAPI.initialize === 'function') {
+        await this.planningDataAPI.initialize();
+      }
       
       this.initialized = true;
       console.log('TPA Agent initialized successfully');

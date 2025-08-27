@@ -19,13 +19,51 @@ class Parser {
 
   async initPdfJs() {
     if (typeof window !== 'undefined' && !this.pdfjsLib) {
-      // Only import and initialize pdf.js on the client side
-      const pdfjsLib = await import('pdfjs-dist/build/pdf');
-      
-      // Set the workerSrc to avoid issues with a missing worker.
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-      
-      this.pdfjsLib = pdfjsLib;
+      try {
+        // Import core build
+        const pdfjsLib = await import('pdfjs-dist/build/pdf');
+        this.pdfjsLib = pdfjsLib;
+
+        // Attempt self-host or dynamic worker resolution strategies
+        let workerSet = false;
+        // 1. If bundler exposes an ESM worker via query (try/catch safe)
+        try {
+          // Some bundlers support ?worker or ?url; we attempt common pattern
+          const workerModule = await import('pdfjs-dist/build/pdf.worker.min.mjs');
+          if (workerModule && workerModule.default) {
+            // Not a URL string; cannot directly assign
+          }
+        } catch (_) {}
+
+        if (!workerSet) {
+          // 2. Try CDN (original approach) but guarded
+          const cdnUrl = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+            pdfjsLib.GlobalWorkerOptions.workerSrc = cdnUrl;
+            workerSet = true;
+        }
+
+        // 3. Test worker creation quickly; if it fails, disable worker fallback
+        try {
+          // Trigger a minimal worker init by creating a dummy loading task (won't resolve fully)
+          const testTask = pdfjsLib.getDocument({ data: new Uint8Array([0x25,0x50,0x44,0x46]) }); // %PDF
+          // Let it start then cancel (ignore rejection)
+          setTimeout(() => { try { testTask.destroy(); } catch(_) {} }, 50);
+        } catch (err) {
+          console.warn('PDF worker test failed, falling back to disableWorker mode:', err);
+          pdfjsLib.GlobalWorkerOptions.workerSrc = undefined;
+          pdfjsLib.disableWorker = true;
+        }
+      } catch (e) {
+        console.error('Failed to initialize pdf.js build; falling back to disabled worker mode:', e);
+        // Last resort: try legacy import
+        try {
+          const legacyLib = await import('pdfjs-dist/legacy/build/pdf');
+          legacyLib.disableWorker = true;
+          this.pdfjsLib = legacyLib;
+        } catch (legacyErr) {
+          console.error('Legacy pdf.js load also failed:', legacyErr);
+        }
+      }
     }
   }
 
