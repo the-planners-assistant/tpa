@@ -43,15 +43,17 @@ export default class AddressExtractor {
         addressComponents: null
       };
 
-      // Attempt geocoding if Google API key is available
-      if (this.googleApiKey && addressDetail.confidence > 0.6) {
+      // Attempt geocoding for ALL extracted address candidates (aggressive strategy)
+      if (this.googleApiKey) {
         try {
           const geocoded = await this.geocodeAddress(addressDetail.cleaned);
           if (geocoded) {
             addressDetail.coordinates = geocoded.coordinates;
             addressDetail.formattedAddress = geocoded.formattedAddress;
             addressDetail.addressComponents = geocoded.components;
-            addressDetail.confidence = Math.min(addressDetail.confidence + 0.2, 1.0);
+            // Boost confidence based on accuracy granularity
+            const boost = geocoded.accuracy === 'high' ? 0.35 : geocoded.accuracy === 'medium' ? 0.25 : geocoded.accuracy === 'low' ? 0.15 : 0.1;
+            addressDetail.confidence = Math.min(addressDetail.confidence + boost, 1.0);
           }
         } catch (error) {
           console.warn('Geocoding failed for address:', addressDetail.cleaned, error);
@@ -68,7 +70,7 @@ export default class AddressExtractor {
       addresses: addressDetails,
       primaryAddress: addressDetails[0] || null,
       postcodes: [...new Set(postcodes)],
-      hasValidAddress: addressDetails.some(addr => addr.confidence > 0.7)
+      hasValidAddress: addressDetails.some(addr => addr.confidence > 0.55) // lowered threshold to increase success rate
     };
   }
 
@@ -88,7 +90,9 @@ export default class AddressExtractor {
     let confidence = 0.3; // Base confidence
 
     // Has postcode
-    if (this.ukPostcodeRegex.test(address)) {
+  // Reset regex lastIndex to avoid stateful global regex side-effects
+  this.ukPostcodeRegex.lastIndex = 0;
+  if (this.ukPostcodeRegex.test(address)) {
       confidence += 0.3;
     }
 
@@ -158,6 +162,34 @@ export default class AddressExtractor {
       return null;
     } catch (error) {
       console.error('Geocoding error:', error);
+      return null;
+    }
+  }
+
+  /** Reverse geocode coordinates -> structured address */
+  async reverseGeocode(coordinates) {
+    if (!this.googleApiKey || !coordinates || coordinates.length !== 2) return null;
+    try {
+      const [lng, lat] = coordinates;
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${this.googleApiKey}&result_type=street_address|premise|route|postal_code&location_type=ROOFTOP|RANGE_INTERPOLATED`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.status === 'OK' && data.results.length) {
+        const result = data.results[0];
+        return {
+          rawText: result.formatted_address,
+          cleaned: result.formatted_address,
+            postcode: (result.address_components.find(c=>c.types.includes('postal_code'))||{}).long_name || null,
+          confidence: 0.8,
+          coordinates: [lng, lat],
+          formattedAddress: result.formatted_address,
+          addressComponents: this.parseAddressComponents(result.address_components),
+          reverseGeocoded: true
+        };
+      }
+      return null;
+    } catch (e) {
+      console.warn('Reverse geocode failed', e);
       return null;
     }
   }

@@ -45,9 +45,14 @@ class Parser {
         // 3. Test worker creation quickly; if it fails, disable worker fallback
         try {
           // Trigger a minimal worker init by creating a dummy loading task (won't resolve fully)
-          const testTask = pdfjsLib.getDocument({ data: new Uint8Array([0x25,0x50,0x44,0x46]) }); // %PDF
-          // Let it start then cancel (ignore rejection)
-          setTimeout(() => { try { testTask.destroy(); } catch(_) {} }, 50);
+          const testTask = pdfjsLib.getDocument({ data: new Uint8Array([0x25,0x50,0x44,0x46,0x2d]) }); // %PDF- sentinel
+          // Suppress promise rejection explicitly (some builds emit InvalidPDFException for this synthetic doc)
+          if (testTask && testTask.promise) {
+            testTask.promise.then(() => { try { testTask.destroy(); } catch(_) {} }).catch(() => { try { testTask.destroy(); } catch(_) {} });
+          } else {
+            // Fallback simple timeout cleanup
+            setTimeout(() => { try { testTask.destroy(); } catch(_) {} }, 50);
+          }
         } catch (err) {
           console.warn('PDF worker test failed, falling back to disableWorker mode:', err);
           pdfjsLib.GlobalWorkerOptions.workerSrc = undefined;
@@ -108,25 +113,77 @@ class Parser {
 
     let pdf;
     try {
-      pdf = await this.pdfjsLib.getDocument({ data: uint8 }).promise;
+      // Try with standard settings first
+      pdf = await this.pdfjsLib.getDocument({ 
+        data: uint8,
+        useSystemFonts: true,
+        stopAtErrors: false
+      }).promise;
     } catch (err) {
-      // Retry once with disableWorker fallback if structure error occurs
       const msg = String(err && err.message || err);
-      if (/Invalid PDF structure/i.test(msg) && !this.pdfjsLib.disableWorker) {
-        console.warn('Retrying PDF parse with worker disabled due to structure error');
-        try {
-          this.pdfjsLib.disableWorker = true;
-          pdf = await this.pdfjsLib.getDocument({ data: uint8 }).promise;
-        } catch (err2) {
-          // Final diagnostic dump (non-fatal exposure limited to console)
-          const head = Array.from(uint8.slice(0, 16)).map(b => b.toString(16).padStart(2,'0')).join(' ');
-          console.error('PDF parse failed after retry. Size(bytes)=', uint8.length, 'Head=', head, err2);
-          throw new Error('PDF parse failed (after retry): ' + (err2.message || err2));
+      console.warn('Initial PDF parse failed:', msg);
+      
+      // Try multiple recovery strategies
+      if (/Invalid PDF structure|PDF header|corrupted|malformed/i.test(msg)) {
+        // Strategy 1: Try with worker disabled
+        if (!this.pdfjsLib.disableWorker) {
+          try {
+            this.pdfjsLib.disableWorker = true;
+            pdf = await this.pdfjsLib.getDocument({ 
+              data: uint8,
+              useSystemFonts: true,
+              stopAtErrors: false,
+              verbosity: 0
+            }).promise;
+            console.log('PDF parsed successfully with worker disabled');
+          } catch (err2) {
+            // Strategy 2: Try with more permissive settings
+            try {
+              pdf = await this.pdfjsLib.getDocument({ 
+                data: uint8,
+                useSystemFonts: true,
+                stopAtErrors: false,
+                verbosity: 0,
+                isEvalSupported: false,
+                maxImageSize: -1
+              }).promise;
+              console.log('PDF parsed with permissive settings');
+            } catch (err3) {
+              // Strategy 3: Last resort - treat as text
+              console.warn('All PDF parsing strategies failed, falling back to text extraction');
+              const textContent = this.decodeAsText(uint8);
+              return this.buildPlainTextResult(textContent, { pseudo: true, originalError: msg });
+            }
+          }
+        } else {
+          // Worker already disabled, try permissive settings
+          try {
+            pdf = await this.pdfjsLib.getDocument({ 
+              data: uint8,
+              useSystemFonts: true,
+              stopAtErrors: false,
+              verbosity: 0,
+              isEvalSupported: false,
+              maxImageSize: -1
+            }).promise;
+            console.log('PDF parsed with permissive settings (worker pre-disabled)');
+          } catch (err2) {
+            console.warn('Falling back to text extraction after permissive parse failed');
+            const textContent = this.decodeAsText(uint8);
+            return this.buildPlainTextResult(textContent, { pseudo: true, originalError: msg });
+          }
         }
       } else {
-        if (/Invalid PDF structure/i.test(msg)) {
-          const head = Array.from(uint8.slice(0, 16)).map(b => b.toString(16).padStart(2,'0')).join(' ');
-          console.error('Invalid PDF structure (no retry path). Size(bytes)=', uint8.length, 'Head=', head);
+        // Non-structure error: still try one fallback before giving up
+        try {
+          const textContent = this.decodeAsText(uint8);
+          if (textContent && textContent.length > 100) {
+            console.warn('PDF error but text extraction successful, using text mode');
+            return this.buildPlainTextResult(textContent, { pseudo: true, originalError: msg });
+          }
+        } catch (textErr) {
+          // If even text extraction fails, re-throw original error
+          throw new Error(`PDF parsing failed: ${msg}. Text extraction also failed: ${textErr.message}`);
         }
         throw err;
       }
@@ -160,8 +217,8 @@ class Parser {
       result.images.push(...pageData.images);
     }
 
-    // Extract addresses from all text
-    result.addresses = this.extractAddresses(result.text);
+  // Extract addresses from all text using heuristic parser
+  result.addresses = this.extractAddresses(result.text);
 
     // Analyze document type and content
     result.analysis = await this.analyzeDocument(result, options);
@@ -235,10 +292,28 @@ class Parser {
           const imageName = operatorList.argsArray[i][0];
           
           try {
-            // Get image data
-            const image = await page.objs.get(imageName);
-            
-            if (image && image.data) {
+            // Attempt synchronous retrieval first
+            let image = page.objs.get(imageName);
+            if (!image) {
+              // Fallback: wait for object resolution via callback pattern pdf.js supports
+              image = await new Promise((resolve, reject) => {
+                let settled = false;
+                const timeout = setTimeout(() => { if (!settled) { settled = true; reject(new Error('Image object resolution timeout')); } }, 1500);
+                try {
+                  page.objs.get(imageName, data => {
+                    if (settled) return; settled = true; clearTimeout(timeout); resolve(data);
+                  });
+                } catch (cbErr) {
+                  if (!settled) { settled = true; clearTimeout(timeout); reject(cbErr); }
+                }
+              }).catch(err => {
+                // Swallow unresolved image gracefully
+                return null;
+              });
+            }
+
+            // Some builds may expose image as { data, width, height } OR an ImageData-like object
+            if (image && image.data && image.width && image.height) {
               const imageData = {
                 page: pageNumber,
                 name: imageName,
@@ -250,23 +325,31 @@ class Parser {
                 analysis: null
               };
 
-              // Convert to base64 for storage/analysis
               imageData.base64 = this.imageDataToBase64(image);
-              
-              // Analyze image with Gemini if available
               if (this.geminiApiKey && imageData.base64) {
-                imageData.analysis = await this.analyzeImageWithGemini(imageData.base64, pageNumber);
+                try {
+                  imageData.analysis = await this.analyzeImageWithGemini(imageData.base64, pageNumber);
+                } catch (visionErr) {
+                  imageData.analysis = { error: visionErr.message };
+                }
               }
-
               images.push(imageData);
             }
           } catch (imageError) {
-            console.warn(`Failed to extract image ${imageName} from page ${pageNumber}:`, imageError);
+            // Many PDFs have unresolved image references - this is common and not critical
+            if (this.options?.debug) {
+              console.debug(`Image ${imageName} unavailable on page ${pageNumber + 1}: ${imageError.message}`);
+            }
           }
         }
       }
     } catch (error) {
-      console.warn(`Failed to extract images from page ${pageNumber}:`, error);
+      console.warn(`Failed to extract images from page ${pageNumber + 1}:`, error);
+    }
+
+    // Log successful extraction summary
+    if (images.length > 0 && this.options?.debug) {
+      console.log(`Extracted ${images.length} images from page ${pageNumber + 1}`);
     }
 
     return images;
@@ -373,43 +456,84 @@ Provide a structured analysis suitable for planning assessment.`
    * Extract addresses from text
    */
   extractAddresses(text) {
-    const addresses = [];
-    const postcodes = [];
-    
-    // Extract postcodes first
-    let postcodeMatch;
-    while ((postcodeMatch = this.postcodeRegex.exec(text)) !== null) {
-      postcodes.push({
-        postcode: postcodeMatch[0],
-        index: postcodeMatch.index
-      });
+    // Heuristic multi-pass approach (line + token scoring) avoids over‑greedy regex
+    const candidates = [];
+    const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
+    const roadTypes = ['road','street','lane','close','way','avenue','place','crescent','square','terrace','gardens','park','mews','court','row','hill','green','grove','rise','vale','view','walk','gate','field','end','side','yard','estate'];
+    const roadTypeSet = new Set(roadTypes);
+    const postcodeRegex = this.postcodeRegex; // reuse compiled
+    const postcodeHits = [];
+    let m; postcodeRegex.lastIndex = 0;
+    while ((m = postcodeRegex.exec(text)) !== null) {
+      postcodeHits.push({ value: m[0], index: m.index });
     }
-
-    // Extract potential addresses
-    let addressMatch;
-    while ((addressMatch = this.addressRegex.exec(text)) !== null) {
-      const address = addressMatch[0];
-      const addressIndex = addressMatch.index;
-      
-      // Find associated postcode
-      const nearbyPostcode = postcodes.find(pc => 
-        Math.abs(pc.index - addressIndex) < 100 // Within 100 characters
-      );
-
-      addresses.push({
-        address: address.trim(),
-        postcode: nearbyPostcode ? nearbyPostcode.postcode : null,
-        index: addressIndex,
-        confidence: nearbyPostcode ? 0.9 : 0.6
-      });
+    // Score each line
+    lines.forEach((line, idx) => {
+      if (line.length < 6 || line.length > 160) return;
+      const lower = line.toLowerCase();
+      const tokens = lower.split(/[,\s]+/).filter(Boolean);
+      const hasNumber = /\d/.test(tokens[0] || '') || /^\d+/.test(lower);
+      const hasRoad = tokens.some(t => roadTypeSet.has(t.replace(/[^a-z]/g,'')));
+      const postcode = (line.match(postcodeRegex) || [])[0] || null;
+      let score = 0;
+      if (hasNumber) score += 0.3;
+      if (hasRoad) score += 0.4;
+      if (postcode) score += 0.4;
+      // proximity to any postcode within 120 chars in full text
+      if (!postcode) {
+        const globalIdx = text.indexOf(line);
+        if (globalIdx !== -1) {
+          const nearPc = postcodeHits.find(pc => Math.abs(pc.index - globalIdx) < 120);
+          if (nearPc) { score += 0.25; }
+        }
+      }
+      if (score >= 0.45) {
+        candidates.push({ address: line.replace(/\s+/g,' ').trim(), postcode: postcode || null, line: idx, confidence: Math.min(1, score) });
+      }
+    });
+    // Merge adjacent lines that look like multi-line addresses
+    const merged = [];
+    for (let i=0;i<candidates.length;i++) {
+      const cur = candidates[i];
+      const next = candidates[i+1];
+      if (next && next.line === cur.line + 1 && next.address.split(' ').length <= 6 && cur.address.split(' ').length <= 6) {
+        merged.push({ address: cur.address + ', ' + next.address, postcode: cur.postcode || next.postcode, confidence: (cur.confidence+next.confidence)/2 });
+        i++; continue;
+      }
+      merged.push(cur);
     }
+    // Deduplicate by normalized string
+    const dedup = [];
+    const seen = new Set();
+    for (const c of merged) {
+      const norm = c.address.toLowerCase();
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      dedup.push(c);
+    }
+    return dedup.sort((a,b)=>b.confidence-a.confidence).slice(0,25);
+  }
 
-    // Deduplicate and sort by confidence
-    const uniqueAddresses = addresses.filter((addr, index, self) => 
-      index === self.findIndex(a => a.address === addr.address)
-    ).sort((a, b) => b.confidence - a.confidence);
+  /** Plain text fallback builder for non-PDF uploads */
+  buildPlainTextResult(text, { pseudo = false } = {}) {
+    const t0 = Date.now();
+    const res = {
+      text,
+      pages: [{ pageNumber:1, text, images:[], annotations:[], dimensions:{ width:0, height:0 } }],
+      images: [],
+      addresses: this.extractAddresses(text),
+      metadata: { numPages: 1, title: null, pseudo },
+      analysis: {},
+      processingTime: 0
+    };
+    res.analysis = { documentType: 'plain_text', confidence: 0.3, keyFindings: [], planningElements: {}, requiresDetailedAnalysis: false };
+    res.processingTime = Date.now() - t0;
+    return res;
+  }
 
-    return uniqueAddresses;
+  /** Attempt to decode arbitrary binary as UTF-8 text */
+  decodeAsText(uint8) {
+    try { return new TextDecoder('utf-8', { fatal:false }).decode(uint8); } catch { return ''; }
   }
 
   /**
@@ -603,8 +727,14 @@ Document text: ${text.substring(0, 8000)}...`; // Limit to ~8k chars for token e
   splitLongText(text, chunkSize, overlap) {
     const chunks = [];
     let i = 0;
+    const maxIterations = Math.ceil(text.length / Math.max(chunkSize - overlap, 1)) + 10; // safety cap
+    let iterations = 0;
     
     while (i < text.length) {
+      if (iterations++ > maxIterations) {
+        console.warn('splitLongText aborted due to excessive iterations', { textLength: text.length, chunkSize, overlap });
+        break;
+      }
       const end = i + chunkSize;
       let chunk = text.substring(i, end);
       
@@ -617,7 +747,8 @@ Document text: ${text.substring(0, 8000)}...`; // Limit to ~8k chars for token e
       }
       
       chunks.push(chunk.trim());
-      i += chunk.length - overlap;
+      const advance = chunk.length - overlap;
+      i += advance > 0 ? advance : chunk.length || 1; // ensure progress
     }
     
     return chunks;

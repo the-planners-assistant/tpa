@@ -2,56 +2,97 @@
  * Planning Data API Client
  * Integrates with planning.data.gov.uk API for official UK planning constraints
  */
+// Static metadata derived from provided dataset list (trimmed to key fields to avoid excessive bundle size)
+// Each entry keyed by dataset id; includes name, typology, themes, optional description text snippet.
+// Source: user-provided authoritative planning.data.gov.uk dataset catalogue snapshot.
+const DATASET_METADATA = {
+  "address": { name: "Address", typology: "geography", themes: ["administrative"] },
+  "agricultural-land-classification": { name: "Agricultural land classification", typology: "geography", themes: ["environment"], description: "Grades the quality of land for agricultural use" },
+  "air-quality-management-area": { name: "Air quality management area", typology: "geography", themes: ["environment"], description: "Areas exceeding national air quality objectives" },
+  "ancient-woodland": { name: "Ancient woodland", typology: "geography", themes: ["environment"], description: "Continuously wooded since at least 1600 AD" },
+  "ancient-woodland-status": { name: "Ancient woodland status", typology: "category", themes: ["environment"] },
+  "archaeological-priority-area": { name: "Archaeological priority area", typology: "geography", themes: ["environment","heritage"] },
+  "area-of-outstanding-natural-beauty": { name: "Area of outstanding natural beauty", typology: "geography", themes: ["environment"] },
+  "article-4-direction": { name: "Article 4 direction", typology: "legal-instrument", themes: ["heritage"] },
+  "article-4-direction-area": { name: "Article 4 direction area", typology: "geography", themes: ["heritage"] },
+  "article-4-direction-rule": { name: "Article 4 direction rule", typology: "category", themes: ["heritage"] },
+  "asset-of-community-value": { name: "Asset of community value", typology: "geography", themes: ["heritage"] },
+  "battlefield": { name: "Battlefield", typology: "geography", themes: ["heritage"] },
+  "brownfield-land": { name: "Brownfield land", typology: "geography", themes: ["development"] },
+  "brownfield-site": { name: "Brownfield site", typology: "geography", themes: ["development"] },
+  "building-preservation-notice": { name: "Building preservation notice", typology: "geography", themes: ["development"] },
+  "built-up-area": { name: "Built up area", typology: "geography", themes: ["housing"] },
+  "certificate-of-immunity": { name: "Certificate of immunity", typology: "geography", themes: ["heritage"] },
+  "conservation-area": { name: "Conservation area", typology: "geography", themes: ["heritage"] },
+  "conservation-area-document": { name: "Conservation area document", typology: "document", themes: ["heritage"] },
+  "conservation-area-document-type": { name: "Conservation area document type", typology: "category", themes: ["heritage"] },
+  "developer-agreement": { name: "Developer agreement", typology: "document", themes: ["development"] },
+  "developer-agreement-contribution": { name: "Developer agreement contribution", typology: "metric", themes: ["development"] },
+  "developer-agreement-transaction": { name: "Developer agreement transaction", typology: "metric", themes: ["development"] },
+  "design-code": { name: "Design code", typology: "policy", themes: ["development"] },
+  "design-code-area": { name: "Design code area", typology: "geography", themes: ["development"] },
+  "development-plan-boundary": { name: "Development plan boundary", typology: "geography", themes: ["development"] },
+  "educational-establishment": { name: "Educational establishment", typology: "geography", themes: ["administrative"] },
+  "flood-risk-zone": { name: "Flood risk zone", typology: "geography", themes: ["environment"], description: "Probability of river/sea flooding" },
+  "flood-storage-area": { name: "Flood storage area", typology: "geography", themes: ["environment"] },
+  "forest-inventory": { name: "Forest inventory", typology: "geography", themes: ["environment"] },
+  "green-belt": { name: "Green belt", typology: "geography", themes: ["environment"] },
+  "green-belt-core": { name: "Green belt core", typology: "category", themes: ["environment"] },
+  "heritage-at-risk": { name: "Heritage at risk", typology: "geography", themes: ["heritage"] },
+  "heritage-coast": { name: "Heritage coast", typology: "geography", themes: ["environment","heritage"] },
+  "infrastructure-project": { name: "Infrastructure project", typology: "geography", themes: ["development"] },
+  "infrastructure-project-decision": { name: "Infrastructure project decision", typology: "category", themes: ["development"] },
+  "listed-building": { name: "Listed building", typology: "geography", themes: ["heritage"] },
+  "listed-building-grade": { name: "Listed building grade", typology: "category", themes: ["heritage"] },
+  "listed-building-outline": { name: "Listed building outline", typology: "geography", themes: ["heritage"] },
+  "locally-listed-building": { name: "Locally listed building", typology: "geography", themes: ["heritage"] },
+  "local-plan": { name: "Local plan", typology: "legal-instrument", themes: ["development"] },
+  "local-plan-boundary": { name: "Local plan boundary", typology: "geography", themes: ["development"] },
+  "local-plan-document": { name: "Local plan document", typology: "document", themes: ["development"] },
+  "national-park": { name: "National park", typology: "geography", themes: ["heritage"] },
+  "national-nature-reserve": { name: "National nature reserve", typology: "geography", themes: ["environment","heritage"] },
+  "nature-improvement-area": { name: "Nature improvement area", typology: "geography", themes: ["environment"] },
+  "open-space": { name: "Open space", typology: "geography", themes: ["environment"] },
+  "ownership-status": { name: "Ownership status", typology: "category", themes: ["development"] },
+  "park-and-garden": { name: "Historic parks and gardens", typology: "geography", themes: ["environment","heritage"] },
+  "park-and-garden-grade": { name: "Park and garden grade", typology: "category", themes: ["environment","heritage"] },
+  "planning-application": { name: "Planning application", typology: "geography", themes: ["development","housing","monitoring"] },
+  "planning-application-condition": { name: "Planning application condition", typology: "policy", themes: ["housing","monitoring"] },
+  "planning-condition": { name: "Planning condition", typology: "policy", themes: ["housing","monitoring"] },
+  "planning-permission-status": { name: "Planning permission status", typology: "category", themes: ["development"] },
+  "planning-permission-type": { name: "Planning permission type", typology: "category", themes: ["development"] },
+  "ramsar": { name: "Ramsar site", typology: "geography", themes: ["environment"] },
+  "region": { name: "Region", typology: "geography", themes: ["administrative"] },
+  "scheduled-monument": { name: "Scheduled monument", typology: "geography", themes: ["heritage"] },
+  "site-of-special-scientific-interest": { name: "Site of special scientific interest", typology: "geography", themes: ["environment"] },
+  "special-area-of-conservation": { name: "Special area of conservation", typology: "geography", themes: ["environment"] },
+  "special-protection-area": { name: "Special protection area", typology: "geography", themes: ["environment"] },
+  "title-boundary": { name: "Title boundary", typology: "geography", themes: ["administrative","housing"] },
+  "transport-access-node": { name: "Public transport access node", typology: "geography", themes: ["development","transport"] },
+  "tree": { name: "Tree", typology: "geography", themes: ["environment"] },
+  "tree-preservation-order": { name: "Tree preservation order", typology: "legal-instrument", themes: ["environment"] },
+  "tree-preservation-zone": { name: "Tree preservation zone", typology: "geography", themes: ["environment"] },
+  "ward": { name: "Ward", typology: "geography", themes: ["administrative"] },
+  "world-heritage-site": { name: "World heritage site", typology: "geography", themes: ["heritage"] },
+  "world-heritage-site-buffer-zone": { name: "World heritage site buffer zone", typology: "geography", themes: ["heritage"] }
+};
+
 class PlanningDataAPI {
-  constructor(opts = {}) {
-    this.baseUrl = 'https://www.planning.data.gov.uk';
-    this.cache = new Map();
-    this.cacheTimeout = 24 * 60 * 60 * 1000; // 24 hours
-    // Snapshot fallback (for static hosting / GitHub Pages where CORS blocks direct fetch)
-    this.useLocalSnapshot = opts.useLocalSnapshot !== false; // default true
-    this.localSnapshotPath = opts.localSnapshotPath || '/planning-data/dataset.snapshot.json';
+  constructor() {
+    // Direct or proxy base (proxy optional). No dataset caching retained.
+    this.baseUrl = (typeof window !== 'undefined' ? process?.env?.NEXT_PUBLIC_PD_API_PROXY : process?.env?.PD_API_PROXY) || 'https://www.planning.data.gov.uk';
   }
 
   /**
    * Initialize hook for consistency with other services.
    * Currently warms dataset list cache; safe to call multiple times.
    */
-  async initialize() {
-    try {
-      await this.getDatasets();
-      return true;
-    } catch (e) {
-      // Non-fatal
-      return false;
-    }
-  }
+  async initialize() { return true; }
 
   /**
    * Get available datasets from planning.data.gov.uk
    */
-  async getDatasets() {
-    const cacheKey = 'datasets';
-    if (!this.cache) this.cache = new Map();
-    const cached = this.cache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < this.cacheTimeout) return cached.data;
-
-    // 1. Try live fetch first
-    let datasets = await this._safeJsonFetch(`${this.baseUrl}/dataset.json`, { retries: 0 });
-
-    // 2. Fallback to snapshot if live failed / blocked and enabled
-    if ((!datasets || !Array.isArray(datasets)) && this.useLocalSnapshot && typeof window !== 'undefined') {
-      try {
-        const snapshot = await this._safeJsonFetch(this.localSnapshotPath, { retries: 0 });
-        if (Array.isArray(snapshot)) datasets = snapshot;
-      } catch (_) {}
-    }
-
-    if (Array.isArray(datasets)) {
-      this.cache.set(cacheKey, { data: datasets, timestamp: Date.now() });
-      return datasets;
-    }
-    return [];
-  }
+  // Dataset listing intentionally removed (instruction: only spatial data & analysis)
 
   /**
    * Search entities by location (lat/lng)
@@ -153,8 +194,10 @@ class PlanningDataAPI {
    */
   processConstraints(constraints, siteLat, siteLng) {
     return constraints.map(constraint => {
-      const category = this.categorizeConstraint(constraint.dataset);
-      const severity = this.assessConstraintSeverity(constraint.dataset);
+      const datasetId = constraint.dataset;
+  const meta = DATASET_METADATA[datasetId] || {};
+      const category = this.categorizeConstraint(datasetId);
+      const severity = this.assessConstraintSeverity(datasetId);
       
       // Calculate distance if not intersecting
       let distance = 0;
@@ -172,7 +215,8 @@ class PlanningDataAPI {
         geometry: constraint.geometry,
         properties: constraint,
         source: 'planning.data.gov.uk',
-        relevantPolicies: this.getRelevantPolicies(constraint.dataset)
+  relevantPolicies: this.getRelevantPolicies(constraint.dataset),
+  datasetMeta: meta
       };
     });
   }
@@ -181,35 +225,40 @@ class PlanningDataAPI {
    * Categorize constraints by planning significance
    */
   categorizeConstraint(dataset) {
-    const categories = {
-      'heritage': [
-        'conservation-area', 'listed-building', 'scheduled-monument', 
-        'world-heritage-site', 'historic-park-garden'
-      ],
-      'environmental': [
-        'special-protection-area', 'special-area-of-conservation',
-        'site-of-special-scientific-interest', 'ancient-woodland',
-        'flood-risk-zone'
-      ],
-      'landscape': [
-        'national-park', 'area-of-outstanding-natural-beauty', 'green-belt'
-      ],
-      'regulatory': [
-        'article-4-direction', 'tree-preservation-order'
-      ]
-    };
-
-    for (const [category, datasets] of Object.entries(categories)) {
-      if (datasets.includes(dataset)) return category;
+    const meta = DATASET_METADATA[dataset];
+    if (meta && Array.isArray(meta.themes)) {
+      if (meta.themes.includes('heritage')) return 'heritage';
+      if (meta.themes.includes('environment')) return 'environmental';
+      if (meta.themes.includes('development')) return 'development';
+      if (meta.themes.includes('housing')) return 'housing';
+      if (meta.themes.includes('transport')) return 'transport';
+      if (meta.themes.includes('administrative')) return 'administrative';
     }
-    return 'other';
+    // Fallback legacy mapping
+    const legacy = {
+      'conservation-area': 'heritage',
+      'listed-building': 'heritage',
+      'scheduled-monument': 'heritage',
+      'world-heritage-site': 'heritage',
+      'flood-risk-zone': 'environmental',
+      'ancient-woodland': 'environmental',
+      'special-protection-area': 'environmental',
+      'special-area-of-conservation': 'environmental',
+      'site-of-special-scientific-interest': 'environmental',
+      'green-belt': 'landscape',
+      'national-park': 'landscape',
+      'area-of-outstanding-natural-beauty': 'landscape',
+      'article-4-direction': 'regulatory',
+      'tree-preservation-order': 'regulatory'
+    };
+    return legacy[dataset] || 'other';
   }
 
   /**
    * Assess constraint severity for planning purposes
    */
   assessConstraintSeverity(dataset) {
-    const severityMap = {
+    const baseMap = {
       'world-heritage-site': 'critical',
       'scheduled-monument': 'critical',
       'listed-building': 'high',
@@ -225,8 +274,26 @@ class PlanningDataAPI {
       'article-4-direction': 'medium',
       'tree-preservation-order': 'low'
     };
+    if (baseMap[dataset]) return baseMap[dataset];
+    // Heuristic severity for unknown datasets based on themes/typology
+    const meta = DATASET_METADATA[dataset];
+    if (meta) {
+      if (meta.themes?.includes('heritage')) return 'high';
+      if (meta.themes?.includes('environment')) return 'medium';
+      if (meta.typology === 'legal-instrument') return 'high';
+      if (meta.typology === 'policy') return 'medium';
+    }
+    return 'low';
+  }
 
-    return severityMap[dataset] || 'low';
+  /** Retrieve dataset metadata (public helper) */
+  getDatasetInfo(dataset) { return DATASET_METADATA[dataset] || null; }
+
+  /** List known datasets with optional filter by theme */
+  listKnownDatasets({ theme } = {}) {
+    return Object.entries(DATASET_METADATA)
+      .filter(([_, meta]) => !theme || meta.themes?.includes(theme))
+      .map(([id, meta]) => ({ id, ...meta }));
   }
 
   /**
@@ -261,19 +328,11 @@ class PlanningDataAPI {
    */
   async analyzeSite(address, latitude, longitude, geometry = null) {
     try {
-      const [constraints, datasets] = await Promise.all([
-        this.getConstraintsForSite(latitude, longitude),
-        this.getDatasets()
-      ]);
-
-      // Get additional context data
-      const additionalData = await this.getAdditionalSiteData(latitude, longitude);
-
+      const constraints = await this.getConstraintsForSite(latitude, longitude);
       return {
         address,
         coordinates: { latitude, longitude },
         constraints,
-        datasets: datasets.filter(d => d.dataset),
         analysis: {
           totalConstraints: constraints.length,
           criticalConstraints: constraints.filter(c => c.severity === 'critical').length,
@@ -281,7 +340,6 @@ class PlanningDataAPI {
           categories: this.summarizeConstraintCategories(constraints),
           policyImplications: this.derivePolicyImplications(constraints)
         },
-        additionalData,
         analysisDate: new Date().toISOString()
       };
     } catch (error) {
@@ -293,17 +351,7 @@ class PlanningDataAPI {
   /**
    * Get additional site context data
    */
-  async getAdditionalSiteData(latitude, longitude) {
-    // Could be extended to include:
-    // - Transport accessibility
-    // - Local plan allocations
-    // - Development plan boundaries
-    return {
-      transport: null,
-      allocations: null,
-      boundaries: null
-    };
-  }
+  // Removed ancillary site context per instruction
 
   /**
    * Summarize constraint categories
@@ -374,9 +422,7 @@ class PlanningDataAPI {
   /**
    * Clear cache
    */
-  clearCache() {
-    this.cache.clear();
-  }
+  clearCache() {}
 
   /** Internal: robust fetch with timeout and JSON parsing */
   async _safeJsonFetch(url, { timeout = 15000, retries = 1 } = {}) {
@@ -399,13 +445,27 @@ class PlanningDataAPI {
           }
         }
         clearTimeout(id);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          // Handle specific HTTP error codes
+          if (res.status === 422) {
+            throw new Error(`Invalid parameters (HTTP 422) - check dataset names and coordinate format`);
+          } else if (res.status >= 500) {
+            throw new Error(`Server error (HTTP ${res.status})`);
+          } else {
+            throw new Error(`HTTP ${res.status}`);
+          }
+        }
         const text = await res.text();
         try { return JSON.parse(text); } catch (e) { throw new Error('Invalid JSON'); }
       } catch (err) {
         clearTimeout(id);
         if (attempt === retries) {
-          console.error(`PlanningDataAPI fetch failed (${url}):`, err.message);
+          // Only log as warning for non-critical services, debug for others
+          if (url.includes('railway-station') || url.includes('bus-stop') || url.includes('town-centre')) {
+            console.debug(`PlanningDataAPI service unavailable (${url}): ${err.message}`);
+          } else {
+            console.warn(`PlanningDataAPI fetch failed (${url}): ${err.message}`);
+          }
           return null;
         }
         await new Promise(r => setTimeout(r, 300 * (attempt + 1)));

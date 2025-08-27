@@ -99,83 +99,153 @@ const BalanceWidget = ({
   };
 
   return (
-    <div className="p-4 border rounded-lg space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-bold">Planning Balance</h3>
-        {showTransparencyToggle && (
+    <div className="space-y-6">
+      {showTransparencyToggle && (
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-zinc-900">Material Considerations</h3>
           <button
             type="button"
             onClick={() => setTransparencyOpen(o => !o)}
-            className="text-xs text-zinc-600 hover:text-zinc-800 underline"
+            className="text-sm text-zinc-600 hover:text-zinc-800 underline transition-colors"
           >
-            {transparencyOpen ? 'Hide numeric' : 'Show numeric'}
+            {transparencyOpen ? 'Hide technical details' : 'Show technical details'}
           </button>
-        )}
-      </div>
-  <div className={layout === 'grid' ? 'grid gap-3 sm:grid-cols-2 xl:grid-cols-3' : 'space-y-3'}>
+        </div>
+      )}
+      
+      <div className={layout === 'grid' ? 'grid gap-4 sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3' : 'space-y-4'}>
         {items.map((item, index) => {
           const cat = CATEGORY_DEFS.find(c => c.id === item.category) || scoreToCategory(item.score);
-          const relatedCats = CATEGORY_DEFS.filter(c => c.polarity === cat.polarity && c.id !== 'neutral');
+          const relatedCats = CATEGORY_DEFS.filter(c => Math.abs(cat.min - c.min) < 1.5); // Show nearby categories
+          
           return (
-    <div key={item.name} className="border rounded-md p-2 bg-white/50 flex flex-col">
-              <div className="flex items-start gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-zinc-800">{item.name}</div>
-                  <button
-                    type="button"
-                    onClick={() => setOpenEditor(openEditor === index ? null : index)}
-                    className="mt-1 inline-flex items-center gap-2 text-left"
-                  >
-                    <span className="text-lg" aria-hidden>{cat.traffic}</span>
-                    <span className="text-sm font-semibold text-zinc-700">
-                      {item.phrase}
-                      {item.overridden && <span className="ml-1 text-[10px] uppercase tracking-wide text-amber-600">(edited)</span>}
-                    </span>
-                    <span className="text-[10px] text-zinc-500 uppercase">edit</span>
-                  </button>
-                  {item.details && (
-                    <div className="mt-1 text-xs text-zinc-600 line-clamp-3">{item.details}</div>
-                  )}
+            <div key={item.name} className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
+              <div className="space-y-4">
+                {/* Header */}
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-base font-semibold text-zinc-900 mb-1">{item.name}</h4>
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl" aria-hidden="true">{cat.traffic}</span>
+                      <div>
+                        <div className={`text-sm font-medium ${
+                          cat.polarity === 'positive' ? 'text-emerald-700' :
+                          cat.polarity === 'negative' ? 'text-red-700' : 'text-zinc-700'
+                        }`}>
+                          {cat.label}
+                        </div>
+                        {item.confidence && (
+                          <div className="text-xs text-zinc-500">
+                            {(item.confidence * 100).toFixed(0)}% confidence
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Quick Actions */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setOpenEditor(openEditor === index ? null : index)}
+                      className="p-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-lg transition-colors"
+                      title="Adjust weighting"
+                    >
+                      ⚙️
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => cyclePhrase(index)}
+                      className="p-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-lg transition-colors"
+                      title="Change phrasing"
+                    >
+                      🔄
+                    </button>
+                  </div>
                 </div>
-                <div>
+                
+                {/* Current Assessment */}
+                <div className="bg-zinc-50 rounded-lg p-3">
                   <button
                     type="button"
                     onClick={() => cyclePhrase(index)}
-                    className="text-[10px] px-2 py-1 rounded bg-zinc-100 hover:bg-zinc-200 text-zinc-700"
-                    title="Cycle phrase variant"
-                  >Phrase ↺</button>
+                    className="text-left w-full hover:bg-zinc-100 rounded p-1 transition-colors"
+                  >
+                    <div className="text-sm font-medium text-zinc-800 mb-1">Current Assessment:</div>
+                    <div className="text-sm text-zinc-700 leading-relaxed">
+                      "{item.phrase}"
+                      {item.overridden && (
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
+                          Modified
+                        </span>
+                      )}
+                    </div>
+                  </button>
                 </div>
-              </div>
-              {openEditor === index && (
-                <div className="mt-2 border-t pt-2">
-                  <div className="text-[10px] font-semibold text-zinc-500 mb-1">Adjust weighting</div>
-                  <div className="flex flex-wrap gap-1">
-                    {relatedCats.map(rc => (
-                      <button
-                        key={rc.id}
-                        type="button"
-                        onClick={() => handleCategoryChange(index, rc.id)}
-                        className={`text-xs px-2 py-1 rounded border ${rc.id === cat.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white hover:bg-zinc-100 text-zinc-700'}`}
-                      >
-                        {rc.traffic} {rc.label.replace(/ .*/, '')}
-                      </button>
-                    ))}
-                    {cat.polarity !== 'neutral' && (
-                      <button
-                        type="button"
-                        onClick={() => handleCategoryChange(index, 'neutral')}
-                        className={`text-xs px-2 py-1 rounded border ${cat.id === 'neutral' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white hover:bg-zinc-100 text-zinc-700'}`}
-                      >⚪ Neutral</button>
-                    )}
+                
+                {/* Evidence/Details */}
+                {item.details && (
+                  <div className="text-sm text-zinc-600 bg-blue-50 rounded-lg p-3">
+                    <div className="font-medium text-blue-900 mb-1">Evidence:</div>
+                    <div className="leading-relaxed">{item.details}</div>
                   </div>
-                </div>
-              )}
-              {transparencyOpen && (
-                <div className="mt-2 text-[11px] text-zinc-500 flex items-center justify-between">
-                  <span>Internal score: {item.score.toFixed(2)}</span>
-                  <span>Category: {cat.label}</span>
-                </div>
-              )}
+                )}
+                
+                {/* Adjustment Panel */}
+                {openEditor === index && (
+                  <div className="border-t border-zinc-200 pt-4 mt-4 space-y-3">
+                    <div className="text-sm font-medium text-zinc-700 mb-2">Adjust Planning Weight:</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {relatedCats.map(rc => (
+                        <button
+                          key={rc.id}
+                          type="button"
+                          onClick={() => handleCategoryChange(index, rc.id)}
+                          className={`text-xs px-3 py-2 rounded-lg border transition-colors ${
+                            rc.id === cat.id 
+                              ? 'bg-blue-600 text-white border-blue-600' 
+                              : 'bg-white hover:bg-zinc-50 text-zinc-700 border-zinc-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1">
+                            <span>{rc.traffic}</span>
+                            <span className="font-medium">{rc.label.split(' ')[0]}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setOpenEditor(null)}
+                      className="w-full text-xs text-zinc-500 hover:text-zinc-700 py-2 transition-colors"
+                    >
+                      Done editing
+                    </button>
+                  </div>
+                )}
+                
+                {/* Technical Details */}
+                {transparencyOpen && (
+                  <div className="border-t border-zinc-200 pt-3 mt-3">
+                    <div className="text-xs text-zinc-500 space-y-1">
+                      <div className="flex justify-between">
+                        <span>Numeric score:</span>
+                        <span className="font-mono">{item.score.toFixed(3)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Category ID:</span>
+                        <span className="font-mono">{cat.id}</span>
+                      </div>
+                      {item.confidence && (
+                        <div className="flex justify-between">
+                          <span>AI confidence:</span>
+                          <span className="font-mono">{(item.confidence * 100).toFixed(1)}%</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           );
         })}

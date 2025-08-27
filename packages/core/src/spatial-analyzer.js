@@ -864,7 +864,7 @@ export default class SpatialAnalyzer {
       });
     }
 
-    return evidence;
+    return context;
   }
 
   // Helper methods
