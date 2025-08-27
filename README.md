@@ -1,7 +1,26 @@
+
 # The Planner’s Assistant — Main Repository
 
 **Planner-first. Local-first. Open.**
 This is the home of the next release of **The Planner’s Assistant** — a browser-based AI toolkit for UK planning that keeps reasoning visible, data open, and planners in control.
+
+---
+
+## Getting Started
+
+First, install the dependencies:
+
+```bash
+npm install
+```
+
+Then, run the development server:
+
+```bash
+npm run dev --workspace=web
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 ---
 
@@ -69,21 +88,21 @@ Build the tool planners actually need:
 
 * **Apps**
 
-  * `apps/demo` – interactive planning demo (map-centric)
-  * `apps/site` – marketing/docs (optional)
+  * `apps/web` – The main web application.
+  * `apps/lab` – Experimental playground.
 * **Packages**
 
-  * `packages/core` – domain models, policy/site/application types
-  * `packages/retriever` – hybrid search, chunk stores, provenance
-  * `packages/embeddings` – local embeddings + adapters for cloud LLMs
-  * `packages/spatial` – MapLibre/Turf helpers, constraint pipelines
-  * `packages/ui` – shared components (panels, inspectors, graph viewer)
-  * `packages/ingest` – PDF parsing, chunking, metadata extraction
+  * `packages/core` – Core logic of The Planner's Assistant.
+  * `packages/ingest` – Ingesting and parsing documents.
+  * `packages/nlp` – Natural language processing logic.
+  * `packages/ui` – UI components.
+  * `packages/map` – Map components.
+  * `packages/fixtures` – Sample data.
 * **Tooling**
 
   * `tooling/scripts` – ingest, dev data, sanity checks
 
-> Tech stack: Svelte + Vite + TypeScript, Tailwind, MapLibre, Turf.js, Dexie + entity-db, transformers.js + onnxruntime-web.
+> Tech stack: Next.js, React, Tailwind CSS, MapLibre, Turf.js, Dexie, transformers.js, onnxruntime-web, Gemini API.
 
 ### How it fits together
 

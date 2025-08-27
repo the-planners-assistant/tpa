@@ -1,0 +1,65 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`renders correctly 1`] = `
+<div
+  className="p-4 border rounded-lg"
+>
+  <h3
+    className="text-lg font-bold mb-4"
+  >
+    Planning Balance
+  </h3>
+  <div>
+    <div
+      className="mb-4"
+    >
+      <label
+        className="block text-sm font-medium text-gray-700"
+        htmlFor="Heritage"
+      >
+        Heritage
+      </label>
+      <input
+        className="sc-bRKDuR bbKJje w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+        id="Heritage"
+        max="100"
+        min="0"
+        name="Heritage"
+        onChange={[Function]}
+        type="range"
+        value={50}
+      />
+      <div
+        className="text-center"
+      >
+        50
+      </div>
+    </div>
+    <div
+      className="mb-4"
+    >
+      <label
+        className="block text-sm font-medium text-gray-700"
+        htmlFor="Housing Delivery"
+      >
+        Housing Delivery
+      </label>
+      <input
+        className="sc-bRKDuR bbKJje w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+        id="Housing Delivery"
+        max="100"
+        min="0"
+        name="Housing Delivery"
+        onChange={[Function]}
+        type="range"
+        value={70}
+      />
+      <div
+        className="text-center"
+      >
+        70
+      </div>
+    </div>
+  </div>
+</div>
+`;
