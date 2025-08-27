@@ -32,7 +32,7 @@ class Agent {
     // Configuration
     this.config = {
       googleApiKey: config.googleApiKey || config.apiKey,
-      geminiModel: config.geminiModel || 'gemini-2.0-flash-exp',
+      geminiModel: config.geminiModel || 'gemini-2.5-flash',
       confidenceThreshold: config.confidenceThreshold || 0.7,
       enableVision: config.enableVision !== false,
       enableAdvancedReasoning: config.enableAdvancedReasoning !== false,
