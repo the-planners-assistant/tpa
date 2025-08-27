@@ -5,7 +5,11 @@
   "description": "**Planner-first. Local-first. Open.** This is the home of the next release of **The Planner’s Assistant** — a browser-based AI toolkit for UK planning that keeps reasoning visible, data open, and planners in control.",
   "main": "index.js",
   "scripts": {
-    "test": "jest"
+    "dev": "npm run dev --workspace=apps/web",
+    "build": "npm run build --workspace=apps/web",
+    "start": "npm run start --workspace=apps/web",
+    "test": "jest",
+    "dev:lab": "npm run dev --workspace=apps/lab"
   },
   "repository": {
     "type": "git",
@@ -24,6 +28,9 @@
   ],
   "devDependencies": {
     "jest": "^30.1.0",
-    "react-test-renderer": "^18.2.0"
+    "react-test-renderer": "^19.1.1"
+  },
+  "dependencies": {
+    "lucide-react": "^0.542.0"
   }
 }

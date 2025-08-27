@@ -6,11 +6,11 @@ const Layout = ({ children }) => {
     <div>
       <header className="bg-gray-800 text-white p-4">
         <nav className="flex items-center justify-between">
-          <Link href="/">
-            <a className="text-xl font-bold">The Planner's Assistant</a>
+          <Link href="/" className="text-xl font-bold">
+            The Planner's Assistant
           </Link>
-          <Link href="/settings">
-            <a className="text-sm">Settings</a>
+          <Link href="/settings" className="text-sm">
+            Settings
           </Link>
         </nav>
       </header>

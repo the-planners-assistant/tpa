@@ -1,12 +1,28 @@
-import * as pdfjsLib from 'pdfjs-dist/build/pdf';
-
-// Set the workerSrc to avoid issues with a missing worker.
-// This is a common pattern for using pdf.js in a web application.
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-
 class Parser {
+  constructor() {
+    this.pdfjsLib = null;
+  }
+
+  async initPdfJs() {
+    if (typeof window !== 'undefined' && !this.pdfjsLib) {
+      // Only import and initialize pdf.js on the client side
+      const pdfjsLib = await import('pdfjs-dist/build/pdf');
+      
+      // Set the workerSrc to avoid issues with a missing worker.
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+      
+      this.pdfjsLib = pdfjsLib;
+    }
+  }
+
   async parse(dataBuffer) {
-    const pdf = await pdfjsLib.getDocument({ data: dataBuffer }).promise;
+    await this.initPdfJs();
+    
+    if (!this.pdfjsLib) {
+      throw new Error('PDF.js is not available in this environment');
+    }
+
+    const pdf = await this.pdfjsLib.getDocument({ data: dataBuffer }).promise;
     const numPages = pdf.numPages;
     let text = '';
     for (let i = 1; i <= numPages; i++) {
