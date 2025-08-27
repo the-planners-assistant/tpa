@@ -25,9 +25,21 @@ const PolicyUpload = ({
         return false;
       }
       
-      const validTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain', 'text/html'];
-      if (!validTypes.includes(file.type) && !file.name.match(/\.(pdf|docx|txt|html)$/i)) {
-        onError?.(`File ${file.name} has unsupported format`);
+      // Check file type by extension and MIME type
+      const fileExtension = file.name.split('.').pop()?.toLowerCase();
+      const validExtensions = ['pdf', 'docx', 'txt', 'html'];
+      const validMimeTypes = [
+        'application/pdf', 
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
+        'text/plain', 
+        'text/html'
+      ];
+      
+      const hasValidExtension = validExtensions.includes(fileExtension);
+      const hasValidMimeType = validMimeTypes.includes(file.type);
+      
+      if (!hasValidExtension && !hasValidMimeType) {
+        onError?.(`File ${file.name} has unsupported format. Supported formats: PDF, Word (.docx), Text (.txt), HTML`);
         return false;
       }
       
@@ -40,7 +52,7 @@ const PolicyUpload = ({
       status: 'pending',
       name: file.name,
       size: file.size,
-      type: file.type
+      type: file.type || `application/${file.name.split('.').pop()}`
     }))]);
   }, [files.length, maxFiles, maxSizePerFile, onError]);
 
@@ -96,16 +108,22 @@ const PolicyUpload = ({
           setUploadProgress(prev => ({ ...prev, [fileItem.id]: 0.3 }));
 
           // Parse document
+          console.log(`Parsing ${fileItem.file.name} (${fileItem.file.type})`);
           const parseResult = await parser.parseDocument(
             buffer, 
             fileItem.file.name, 
-            fileItem.file.type
+            fileItem.file.type || `application/${fileItem.file.name.split('.').pop()}`
           );
           setUploadProgress(prev => ({ ...prev, [fileItem.id]: 0.6 }));
 
           // Validate policies
           const validation = parser.validatePolicies(parseResult.policies);
           parseResult.validation = validation;
+
+          // Check if we got any meaningful content
+          if (parseResult.policies.length === 0 && parseResult.metadata.wordCount < 50) {
+            throw new Error('No policies found in document. The file may be empty, corrupted, or contain only images.');
+          }
 
           // Add policies to local plan
           const addedPolicies = [];
@@ -149,10 +167,21 @@ const PolicyUpload = ({
 
         } catch (error) {
           console.error(`Upload failed for ${fileItem.name}:`, error);
+          
+          // Provide specific error messages based on error type
+          let userMessage = error.message;
+          if (error.message.includes('PDF parsing failed')) {
+            userMessage = `PDF processing failed for ${fileItem.name}. The file may be password-protected, corrupted, or contain only scanned images. Try converting to a text-based PDF or plain text format.`;
+          } else if (error.message.includes('Word document parsing failed')) {
+            userMessage = `Word document processing failed for ${fileItem.name}. Please save as PDF or plain text for better results.`;
+          } else if (error.message.includes('No policies found')) {
+            userMessage = `No policies detected in ${fileItem.name}. The document may not contain structured policy content, or may need manual formatting.`;
+          }
+          
           setFiles(prev => prev.map(f => 
-            f.id === fileItem.id ? { ...f, status: 'error', error: error.message } : f
+            f.id === fileItem.id ? { ...f, status: 'error', error: userMessage } : f
           ));
-          onError?.(`Failed to process ${fileItem.name}: ${error.message}`);
+          onError?.(userMessage);
         }
       }
 
