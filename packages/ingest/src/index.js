@@ -1,6 +1,20 @@
+import { getDatabase } from '@tpa/core/src/database.js';
+
+/**
+ * Enhanced PDF Parser with Multimodal Capabilities
+ * Extracts text, images, addresses, and metadata for comprehensive planning document analysis
+ */
 class Parser {
   constructor() {
     this.pdfjsLib = null;
+    this.db = getDatabase();
+    this.geminiApiKey = null;
+    this.addressRegex = /\b\d+[\w\s,.-]*(?:street|road|avenue|lane|drive|close|way|place|crescent|square|terrace|gardens|park|mews|court|row|hill|green|grove|rise|vale|view|walk|gate|field|end|side|yard|estate)\b/gi;
+    this.postcodeRegex = /\b[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}\b/gi;
+  }
+
+  setGeminiApiKey(apiKey) {
+    this.geminiApiKey = apiKey;
   }
 
   async initPdfJs() {
@@ -15,7 +29,10 @@ class Parser {
     }
   }
 
-  async parse(dataBuffer) {
+  /**
+   * Enhanced parse method with multimodal extraction
+   */
+  async parse(dataBuffer, options = {}) {
     await this.initPdfJs();
     
     if (!this.pdfjsLib) {
@@ -24,24 +41,526 @@ class Parser {
 
     const pdf = await this.pdfjsLib.getDocument({ data: dataBuffer }).promise;
     const numPages = pdf.numPages;
-    let text = '';
+    
+    const result = {
+      text: '',
+      pages: [],
+      images: [],
+      addresses: [],
+      metadata: {
+        numPages,
+        title: pdf._pdfInfo?.info?.Title || null,
+        author: pdf._pdfInfo?.info?.Author || null,
+        subject: pdf._pdfInfo?.info?.Subject || null,
+        creator: pdf._pdfInfo?.info?.Creator || null,
+        producer: pdf._pdfInfo?.info?.Producer || null,
+        creationDate: pdf._pdfInfo?.info?.CreationDate || null,
+        modificationDate: pdf._pdfInfo?.info?.ModDate || null
+      },
+      analysis: {},
+      processingTime: Date.now()
+    };
+
+    // Process each page
     for (let i = 1; i <= numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      text += content.items.map(item => item.str).join(' ');
+      const pageData = await this.processPage(pdf, i, options);
+      result.pages.push(pageData);
+      result.text += pageData.text + '\n\n';
+      result.images.push(...pageData.images);
     }
-    return text;
+
+    // Extract addresses from all text
+    result.addresses = this.extractAddresses(result.text);
+
+    // Analyze document type and content
+    result.analysis = await this.analyzeDocument(result, options);
+
+    result.processingTime = Date.now() - result.processingTime;
+
+    return result;
   }
 
+  /**
+   * Process individual PDF page
+   */
+  async processPage(pdf, pageNumber, options = {}) {
+    const page = await pdf.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 1.0 });
+    
+    const pageData = {
+      pageNumber,
+      text: '',
+      images: [],
+      annotations: [],
+      dimensions: {
+        width: viewport.width,
+        height: viewport.height
+      }
+    };
+
+    // Extract text content
+    const textContent = await page.getTextContent();
+    const textItems = textContent.items.map(item => ({
+      text: item.str,
+      x: item.transform[4],
+      y: item.transform[5],
+      width: item.width,
+      height: item.height,
+      fontName: item.fontName,
+      fontSize: item.transform[0]
+    }));
+    
+    pageData.text = textItems.map(item => item.text).join(' ');
+    pageData.textItems = textItems;
+
+    // Extract images if requested
+    if (options.extractImages !== false) {
+      pageData.images = await this.extractPageImages(page, pageNumber);
+    }
+
+    // Extract annotations (form fields, comments, etc.)
+    const annotations = await page.getAnnotations();
+    pageData.annotations = annotations.map(annotation => ({
+      type: annotation.subtype,
+      content: annotation.contents || annotation.buttonValue || '',
+      rect: annotation.rect,
+      page: pageNumber
+    }));
+
+    return pageData;
+  }
+
+  /**
+   * Extract images from PDF page
+   */
+  async extractPageImages(page, pageNumber) {
+    const images = [];
+    
+    try {
+      const operatorList = await page.getOperatorList();
+      
+      for (let i = 0; i < operatorList.fnArray.length; i++) {
+        if (operatorList.fnArray[i] === this.pdfjsLib.OPS.paintImageXObject) {
+          const imageName = operatorList.argsArray[i][0];
+          
+          try {
+            // Get image data
+            const image = await page.objs.get(imageName);
+            
+            if (image && image.data) {
+              const imageData = {
+                page: pageNumber,
+                name: imageName,
+                width: image.width,
+                height: image.height,
+                data: image.data,
+                kind: image.kind,
+                type: this.detectImageType(image),
+                analysis: null
+              };
+
+              // Convert to base64 for storage/analysis
+              imageData.base64 = this.imageDataToBase64(image);
+              
+              // Analyze image with Gemini if available
+              if (this.geminiApiKey && imageData.base64) {
+                imageData.analysis = await this.analyzeImageWithGemini(imageData.base64, pageNumber);
+              }
+
+              images.push(imageData);
+            }
+          } catch (imageError) {
+            console.warn(`Failed to extract image ${imageName} from page ${pageNumber}:`, imageError);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`Failed to extract images from page ${pageNumber}:`, error);
+    }
+
+    return images;
+  }
+
+  /**
+   * Detect image type (plan, elevation, photo, etc.)
+   */
+  detectImageType(image) {
+    const aspectRatio = image.width / image.height;
+    
+    if (aspectRatio > 2) return 'elevation'; // Wide images likely elevations
+    if (aspectRatio > 1.4 && aspectRatio < 1.6) return 'plan'; // Square-ish likely plans
+    if (aspectRatio < 0.8) return 'section'; // Tall images likely sections
+    return 'photo'; // Default to photo/rendering
+  }
+
+  /**
+   * Convert image data to base64
+   */
+  imageDataToBase64(image) {
+    try {
+      // Create canvas to convert image data
+      const canvas = document.createElement('canvas');
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const ctx = canvas.getContext('2d');
+      
+      // Create ImageData object
+      const imageData = ctx.createImageData(image.width, image.height);
+      imageData.data.set(image.data);
+      ctx.putImageData(imageData, 0, 0);
+      
+      // Convert to base64
+      return canvas.toDataURL('image/png').split(',')[1];
+    } catch (error) {
+      console.warn('Failed to convert image to base64:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Analyze image with Gemini Vision API
+   */
+  async analyzeImageWithGemini(base64Image, pageNumber) {
+    if (!this.geminiApiKey) return null;
+
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${this.geminiApiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              {
+                text: `Analyze this planning document image from page ${pageNumber}. Identify:
+1. Type of drawing (site plan, floor plan, elevation, section, location plan, block plan, etc.)
+2. Key measurements and dimensions visible
+3. Building heights, stories, or levels shown
+4. Site boundaries, access points, parking areas
+5. Neighboring buildings or context
+6. Any annotations, labels, or text visible
+7. Scale information if present
+8. Planning-relevant details like materials, landscaping, utilities
+
+Provide a structured analysis suitable for planning assessment.`
+              },
+              {
+                inline_data: {
+                  mime_type: 'image/png',
+                  data: base64Image
+                }
+              }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 1024
+          }
+        })
+      });
+
+      const result = await response.json();
+      
+      if (result.candidates && result.candidates[0]) {
+        return {
+          description: result.candidates[0].content.parts[0].text,
+          confidence: 0.8,
+          model: 'gemini-2.0-flash-exp',
+          timestamp: new Date().toISOString()
+        };
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Gemini image analysis failed:', error);
+      return { error: error.message };
+    }
+  }
+
+  /**
+   * Extract addresses from text
+   */
+  extractAddresses(text) {
+    const addresses = [];
+    const postcodes = [];
+    
+    // Extract postcodes first
+    let postcodeMatch;
+    while ((postcodeMatch = this.postcodeRegex.exec(text)) !== null) {
+      postcodes.push({
+        postcode: postcodeMatch[0],
+        index: postcodeMatch.index
+      });
+    }
+
+    // Extract potential addresses
+    let addressMatch;
+    while ((addressMatch = this.addressRegex.exec(text)) !== null) {
+      const address = addressMatch[0];
+      const addressIndex = addressMatch.index;
+      
+      // Find associated postcode
+      const nearbyPostcode = postcodes.find(pc => 
+        Math.abs(pc.index - addressIndex) < 100 // Within 100 characters
+      );
+
+      addresses.push({
+        address: address.trim(),
+        postcode: nearbyPostcode ? nearbyPostcode.postcode : null,
+        index: addressIndex,
+        confidence: nearbyPostcode ? 0.9 : 0.6
+      });
+    }
+
+    // Deduplicate and sort by confidence
+    const uniqueAddresses = addresses.filter((addr, index, self) => 
+      index === self.findIndex(a => a.address === addr.address)
+    ).sort((a, b) => b.confidence - a.confidence);
+
+    return uniqueAddresses;
+  }
+
+  /**
+   * Analyze document content and type
+   */
+  async analyzeDocument(result, options = {}) {
+    const analysis = {
+      documentType: 'unknown',
+      confidence: 0,
+      keyFindings: [],
+      planningElements: {},
+      requiresDetailedAnalysis: false
+    };
+
+    const text = result.text.toLowerCase();
+    
+    // Detect document type
+    if (text.includes('design and access statement') || text.includes('design & access statement')) {
+      analysis.documentType = 'design_and_access_statement';
+      analysis.confidence = 0.9;
+    } else if (text.includes('planning statement') || text.includes('planning application')) {
+      analysis.documentType = 'planning_statement';
+      analysis.confidence = 0.8;
+    } else if (text.includes('heritage statement') || text.includes('heritage impact')) {
+      analysis.documentType = 'heritage_statement';
+      analysis.confidence = 0.8;
+    } else if (text.includes('transport statement') || text.includes('transport assessment')) {
+      analysis.documentType = 'transport_assessment';
+      analysis.confidence = 0.8;
+    } else if (text.includes('flood risk assessment') || text.includes('drainage strategy')) {
+      analysis.documentType = 'flood_risk_assessment';
+      analysis.confidence = 0.8;
+    } else if (text.includes('ecological') || text.includes('biodiversity')) {
+      analysis.documentType = 'ecological_assessment';
+      analysis.confidence = 0.7;
+    }
+
+    // Extract key planning elements
+    analysis.planningElements = {
+      applicationReference: this.extractApplicationReference(text),
+      applicantName: this.extractApplicantName(text),
+      proposalDescription: this.extractProposalDescription(text),
+      siteArea: this.extractSiteArea(text),
+      buildingHeight: this.extractBuildingHeight(text),
+      numberOfUnits: this.extractNumberOfUnits(text),
+      parkingSpaces: this.extractParkingSpaces(text),
+      floorArea: this.extractFloorArea(text)
+    };
+
+    // Use Gemini for detailed analysis if available
+    if (this.geminiApiKey && options.detailedAnalysis !== false) {
+      analysis.geminiAnalysis = await this.analyzeWithGemini(result.text, analysis.documentType);
+    }
+
+    return analysis;
+  }
+
+  /**
+   * Analyze document with Gemini for detailed planning insights
+   */
+  async analyzeWithGemini(text, documentType) {
+    if (!this.geminiApiKey) return null;
+
+    const prompt = `Analyze this ${documentType} planning document. Extract and summarize:
+
+1. Key planning considerations and policy references
+2. Proposed development details (height, scale, use, materials)
+3. Site constraints and opportunities mentioned
+4. Design principles and architectural approach
+5. Transport and accessibility provisions
+6. Environmental considerations (heritage, ecology, flood risk)
+7. Community benefits or planning obligations
+8. Any objections or concerns anticipated
+9. Compliance with local plan policies (extract policy references)
+10. Material planning considerations for assessment
+
+Document text: ${text.substring(0, 8000)}...`; // Limit to ~8k chars for token efficiency
+
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${this.geminiApiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: prompt }]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 2048
+          }
+        })
+      });
+
+      const result = await response.json();
+      
+      if (result.candidates && result.candidates[0]) {
+        return {
+          analysis: result.candidates[0].content.parts[0].text,
+          model: 'gemini-2.0-flash-exp',
+          timestamp: new Date().toISOString(),
+          tokenUsage: result.usageMetadata
+        };
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Gemini document analysis failed:', error);
+      return { error: error.message };
+    }
+  }
+
+  // Helper extraction methods
+  extractApplicationReference(text) {
+    const refMatch = text.match(/(?:application\s+(?:ref|reference|no|number)[:.]?\s*)([a-z0-9\/\-]{6,20})/i);
+    return refMatch ? refMatch[1] : null;
+  }
+
+  extractApplicantName(text) {
+    const applicantMatch = text.match(/applicant[:.]?\s*([^.\n]{10,50})/i);
+    return applicantMatch ? applicantMatch[1].trim() : null;
+  }
+
+  extractProposalDescription(text) {
+    const proposalMatch = text.match(/(?:proposal|description|development)[:.]?\s*([^.\n]{20,200})/i);
+    return proposalMatch ? proposalMatch[1].trim() : null;
+  }
+
+  extractSiteArea(text) {
+    const areaMatch = text.match(/site\s+area[:.]?\s*([0-9,.]+)\s*(hectares?|ha|m²|sqm|square\s+metres?)/i);
+    return areaMatch ? { value: parseFloat(areaMatch[1].replace(',', '')), unit: areaMatch[2] } : null;
+  }
+
+  extractBuildingHeight(text) {
+    const heightMatch = text.match(/(?:building\s+)?height[:.]?\s*([0-9.]+)\s*(m|metres?|storeys?|floors?)/i);
+    return heightMatch ? { value: parseFloat(heightMatch[1]), unit: heightMatch[2] } : null;
+  }
+
+  extractNumberOfUnits(text) {
+    const unitsMatch = text.match(/([0-9]+)\s*(?:residential\s+)?units?/i);
+    return unitsMatch ? parseInt(unitsMatch[1]) : null;
+  }
+
+  extractParkingSpaces(text) {
+    const parkingMatch = text.match(/([0-9]+)\s*(?:car\s+)?parking\s+spaces?/i);
+    return parkingMatch ? parseInt(parkingMatch[1]) : null;
+  }
+
+  extractFloorArea(text) {
+    const floorMatch = text.match(/(?:floor\s+area|gfa|gross\s+floor\s+area)[:.]?\s*([0-9,.]+)\s*(m²|sqm|square\s+metres?)/i);
+    return floorMatch ? { value: parseFloat(floorMatch[1].replace(',', '')), unit: floorMatch[2] } : null;
+  }
+
+  /**
+   * Enhanced chunking with semantic boundaries
+   */
   chunk(text, chunkSize = 1000, overlap = 200) {
     const chunks = [];
+    
+    // Try to split on paragraph boundaries first
+    const paragraphs = text.split(/\n\s*\n/);
+    let currentChunk = '';
+    
+    for (const paragraph of paragraphs) {
+      if (currentChunk.length + paragraph.length <= chunkSize) {
+        currentChunk += (currentChunk ? '\n\n' : '') + paragraph;
+      } else {
+        if (currentChunk) {
+          chunks.push(currentChunk.trim());
+        }
+        
+        // If paragraph is too long, split it
+        if (paragraph.length > chunkSize) {
+          const subChunks = this.splitLongText(paragraph, chunkSize, overlap);
+          chunks.push(...subChunks);
+          currentChunk = '';
+        } else {
+          currentChunk = paragraph;
+        }
+      }
+    }
+    
+    if (currentChunk) {
+      chunks.push(currentChunk.trim());
+    }
+
+    return chunks.filter(chunk => chunk.length > 0);
+  }
+
+  splitLongText(text, chunkSize, overlap) {
+    const chunks = [];
     let i = 0;
+    
     while (i < text.length) {
       const end = i + chunkSize;
-      chunks.push(text.substring(i, end));
-      i += chunkSize - overlap;
+      let chunk = text.substring(i, end);
+      
+      // Try to end at sentence boundary
+      if (end < text.length) {
+        const lastSentence = chunk.lastIndexOf('.');
+        if (lastSentence > chunkSize * 0.7) {
+          chunk = chunk.substring(0, lastSentence + 1);
+        }
+      }
+      
+      chunks.push(chunk.trim());
+      i += chunk.length - overlap;
     }
+    
     return chunks;
+  }
+
+  /**
+   * Store processed document in database
+   */
+  async storeDocument(file, parsedData) {
+    try {
+      const documentId = await this.db.addDocument(file, {
+        parsedContent: parsedData,
+        addresses: parsedData.addresses,
+        documentType: parsedData.analysis.documentType,
+        planningElements: parsedData.analysis.planningElements
+      });
+
+      // Store images separately
+      for (const image of parsedData.images) {
+        await this.db.extractedImages.add({
+          documentId,
+          imageData: image.base64,
+          analysis: image.analysis,
+          type: image.type,
+          page: image.page,
+          confidence: image.analysis ? 0.8 : 0.5
+        });
+      }
+
+      return documentId;
+    } catch (error) {
+      console.error('Failed to store document:', error);
+      throw error;
+    }
   }
 }
 

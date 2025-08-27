@@ -1,5 +1,6 @@
 {
   "name": "@tpa/core",
+  "type": "module",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -10,7 +11,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@google/genai": "^1.15.0",
-    "dexie": "^4.2.0"
+    "@google/generative-ai": "^0.21.0",
+    "dexie": "^4.2.0",
+    "@turf/turf": "^7.1.0",
+    "pdfjs-dist": "^4.8.69"
   }
 }

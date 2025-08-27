@@ -1,6 +1,7 @@
 {
   "name": "tpa",
   "private": true,
+  "type": "module",
   "version": "1.0.0",
   "description": "**Planner-first. Local-first. Open.** This is the home of the next release of **The Planner’s Assistant** — a browser-based AI toolkit for UK planning that keeps reasoning visible, data open, and planners in control.",
   "main": "index.js",
