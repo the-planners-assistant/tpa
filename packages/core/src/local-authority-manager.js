@@ -83,7 +83,42 @@ export default class LocalAuthorityManager {
 
   /** Placeholder: fetch local plan policies (not implemented yet) */
   async fetchLocalPlanPolicies(authorityName) {
-    // Future: integrate with open data endpoints / scraped sources.
-    return [];
+    if (!authorityName) return [];
+    try {
+      const nameLower = authorityName.toLowerCase();
+      // Find matching local plan(s) by authorityCode or name fuzzy match
+      const plans = await this.db.localPlans?.toArray?.() || [];
+      const matchingPlans = plans.filter(p => {
+        const code = (p.authorityCode || '').toLowerCase();
+        const name = (p.name || '').toLowerCase();
+        return code === nameLower || name === nameLower ||
+          code.includes(nameLower) || name.includes(nameLower) ||
+          nameLower.includes(code) || nameLower.includes(name);
+      });
+      if (!matchingPlans.length) return [];
+      const planIds = matchingPlans.map(p => p.id);
+      // Fetch policies for all matching plans
+      let policies = [];
+      for (const pid of planIds) {
+        const planPolicies = await this.db.localPlanPolicies.where('planId').equals(pid).toArray();
+        policies.push(...planPolicies);
+      }
+      // Lightweight relevance scoring fields (used later in filtering)
+      return policies.map(p => ({
+        planId: p.planId,
+        id: p.id,
+        ref: p.policyRef || p.ref || p.title,
+        policyRef: p.policyRef || p.ref || p.title,
+        title: p.title,
+        category: p.category,
+        text: p.content,
+        content: p.content,
+        requirements: p.requirements || [],
+        _source: 'local_plan_db'
+      }));
+    } catch (e) {
+      console.warn('fetchLocalPlanPolicies failed', authorityName, e.message);
+      return [];
+    }
   }
 }

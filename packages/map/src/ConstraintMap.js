@@ -8,21 +8,60 @@ import 'maplibre-gl/dist/maplibre-gl.css';
  *  - site: { latitude, longitude, geometry? (GeoJSON) }
  *  - constraints: [{ id, name, geometry, severity, category, type }]
  */
-export function ConstraintMap({ site, constraints = [] }) {
+export function ConstraintMap({ site, constraints = [], onSelectLocation, tileStyleUrl }) {
   const mapRef = useRef(null);
   const containerRef = useRef(null);
 
   useEffect(() => {
     if (mapRef.current || !containerRef.current) return;
     const center = site?.coordinates || { latitude: 52.5, longitude: -1.5 };
+    const styleUrl = tileStyleUrl || 'https://raw.githubusercontent.com/go2garret/maps/main/src/assets/json/openStreetMap.json';
     mapRef.current = new maplibregl.Map({
       container: containerRef.current,
-      style: 'https://demotiles.maplibre.org/style.json',
+      style: styleUrl,
       center: [center.longitude, center.latitude],
       zoom: 9
     });
 
     mapRef.current.addControl(new maplibregl.NavigationControl({ showCompass:false }), 'top-right');
+    let fallbackAdded = false;
+
+    function addFallbackRaster(){
+      const map = mapRef.current;
+      if (!map || fallbackAdded) return;
+      fallbackAdded = true;
+      try {
+        if (!map.getSource('osm-raster')) {
+          map.addSource('osm-raster', {
+            type: 'raster',
+            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            attribution: '© OpenStreetMap contributors'
+          });
+          map.addLayer({ id: 'osm-raster-layer', type: 'raster', source: 'osm-raster' }, map.getStyle()?.layers?.[0]?.id);
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    mapRef.current.on('load', () => {
+      // If style has no sources/layers, inject fallback
+      const st = mapRef.current.getStyle();
+      if (!st?.sources || Object.keys(st.sources).length === 0 || !st.layers || st.layers.length === 0) {
+        addFallbackRaster();
+      }
+    });
+    mapRef.current.on('error', (e) => {
+      // Network errors in fetching style or tiles -> fallback
+      if (!fallbackAdded) addFallbackRaster();
+    });
+    // Basic click handler for spatial search selection
+    mapRef.current.on('click', e => {
+      if (typeof onSelectLocation === 'function') {
+        onSelectLocation({ lng: e.lngLat.lng, lat: e.lngLat.lat });
+      }
+    });
   }, [site]);
 
   // Add/update sources & layers

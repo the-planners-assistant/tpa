@@ -47,17 +47,36 @@ export async function resolveAddressPhase(agent, documentResults, assessment) {
   }
   
   agent.addTimelineEvent(assessment, 'address_extraction', `Found ${allAddresses.length} potential addresses from documents`);
-  console.log('Address Resolution: Found addresses:', allAddresses);
+  console.log('Address Resolution: Found addresses (pre-ranking):', allAddresses);
+
+  // New heuristic ranking step: prefer addresses that (a) contain postcode, (b) mention authority name, (c) appear most frequently, (d) are medium length
+  try {
+    const authority = assessment.authority || assessment.options?.authority || assessment.options?.localAuthority;
+    const postcodeRegex = /\b[A-Z]{1,2}[0-9][0-9A-Z]?\s?[0-9][ABD-HJLNP-UW-Z]{2}\b/i;
+    const freq = allAddresses.reduce((m,a)=>{ const k=a.trim(); m[k]=(m[k]||0)+1; return m; }, {});
+    const scored = allAddresses.map(addr=>{
+      const cleaned = addr.trim();
+      const hasPostcode = postcodeRegex.test(cleaned);
+      const containsAuthority = authority ? cleaned.toLowerCase().includes(authority.toLowerCase()) : false;
+      const lengthScore = (cleaned.length >= 15 && cleaned.length <= 120) ? 0.5 : 0.1; // penalize very short/very long
+      const postcodeScore = hasPostcode ? 1 : 0;
+      const authorityScore = containsAuthority ? 0.6 : 0;
+      const freqScore = Math.min(0.4, (freq[cleaned]-1)*0.15);
+      const total = postcodeScore + authorityScore + lengthScore + freqScore;
+      return { addr: cleaned, total, components:{postcodeScore,authorityScore,lengthScore,freqScore} };
+    });
+    scored.sort((a,b)=>b.total-a.total);
+    const ranked = scored.map(s=>s.addr);
+    agent.addTimelineEvent(assessment, 'address_ranking', `Ranked addresses; top candidate: ${ranked[0]}`);
+    console.log('Address Resolution: Ranked addresses with scores:', scored.slice(0,8));
+    // Replace ordering for downstream geocoding
+    allAddresses.length = 0; allAddresses.push(...ranked);
+  } catch (e) {
+    console.warn('Address ranking heuristic failed', e.message);
+  }
   
-  // Try to resolve addresses with Google geocoding first
-  // Boost addresses that contain full UK postcode (improve ordering before extraction)
-  const postcodeRegex = /\b[A-Z]{1,2}[0-9][0-9A-Z]?\s?[0-9][ABD-HJLNP-UW-Z]{2}\b/i;
-  const boosted = allAddresses.sort((a,b)=>{
-    const ap = postcodeRegex.test(a) ? 1 : 0;
-    const bp = postcodeRegex.test(b) ? 1 : 0;
-    return bp - ap; // postcode-containing first
-  });
-  const addressResult = await agent.addressExtractor.extractAddresses(boosted.join(' '));
+  // Try to resolve addresses with Google geocoding first (now using ranked ordering)
+  const addressResult = await agent.addressExtractor.extractAddresses(allAddresses.join(' '));
   
   if (!addressResult.hasValidAddress) {
     // Enhanced fallback 1: Try LLM-based address analysis

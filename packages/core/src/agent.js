@@ -280,6 +280,7 @@ class Agent {
         applicationDocuments: isStructured ? (documentFiles.application || []) : (Array.isArray(documentFiles) ? documentFiles : []),
         policyDocuments: isStructured ? (documentFiles.policy || []) : [],
         options: options,
+  authority: options.authority || options.localAuthority || null,
         results: {},
         confidence: 0,
         recommendation: null,
